@@ -22,7 +22,10 @@ def test_publish_text_post_happy_path(client):
             MagicMock(status_code=200, json=lambda: {"id": "container-1"}),
             MagicMock(status_code=200, json=lambda: {"id": "media-1"}),
         ]
-        mock_get.return_value = MagicMock(status_code=200, json=lambda: {"status": "FINISHED"})
+        mock_get.side_effect = [
+            MagicMock(status_code=200, json=lambda: {"data": [{"quota_usage": 10, "config": {"quota_total": 250}}]}),
+            MagicMock(status_code=200, json=lambda: {"status": "FINISHED"}),
+        ]
 
         media_id = client.publish_text_post("Тестовый пост")
 

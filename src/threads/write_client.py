@@ -65,11 +65,13 @@ class ThreadsWriteClient:
         return data["id"]
 
     def publish_text_post(self, text: str, reply_to_id: str | None = None) -> str:
+        self.check_publishing_limit(kind="posts")
         container_id = self.create_container(text, reply_to_id=reply_to_id)
         self.wait_until_ready(container_id)
         return self.publish_container(container_id)
 
     def reply_to_post(self, post_id: str, text: str) -> str:
+        self.check_publishing_limit(kind="replies")
         container_id = self.create_container(text, reply_to_id=post_id)
         self.wait_until_ready(container_id)
         return self.publish_container(container_id)
