@@ -7,13 +7,14 @@ from dataclasses import dataclass
 import yaml
 from openai import OpenAI
 
+from src.config import load_settings
 from src.db.engine import session_scope
 from src.db.repo import get_month_to_date_cost_usd, record_llm_call, upsert_daily_spend
 from src.llm.pricing import cost_usd
 
-BUDGET_SOFT_STOP_USD = 8.0
-BUDGET_HARD_STOP_USD = 10.0
-BUDGET_SOFT_STOP_ALLOWED_ROLE = "post_writer"
+BUDGET_SOFT_STOP_USD = load_settings()["budget"]["soft_stop_usd"]
+BUDGET_HARD_STOP_USD = load_settings()["budget"]["hard_stop_usd"]
+BUDGET_SOFT_STOP_ALLOWED_ROLE = load_settings()["budget"]["soft_stop_allowed_role"]
 
 
 class BudgetExceeded(Exception):
