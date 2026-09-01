@@ -1,0 +1,15 @@
+providers:
+  glm:
+    base_url: https://api.z.ai/api/paas/v4
+    key_env: GLM_API_KEY
+  kimi:
+    base_url: https://api.moonshot.ai/v1
+    key_env: KIMI_API_KEY
+
+roles:
+  post_writer:   { provider: glm, model: glm-4.7,       max_tokens: 2000 }
+  analyst:       { provider: glm, model: glm-4.7,       max_tokens: 8000 }
+  commenter:     { provider: glm, model: glm-4.7,       max_tokens: 500 }
+  lead_scorer:   { provider: glm, model: glm-4.7-flash, max_tokens: 300 }
+  style_critic:  { provider: glm, model: glm-4.7-flash, max_tokens: 400 }
+  classifier:    { provider: glm, model: glm-4.7-flash, max_tokens: 200 }
