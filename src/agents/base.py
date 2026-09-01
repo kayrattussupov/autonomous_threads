@@ -1,20 +1,35 @@
 import time
 from abc import ABC, abstractmethod
 
+from src.config import load_settings
 from src.db.engine import session_scope
 from src.db.repo import add_agent_step, finish_agent_run, start_agent_run
-
-
-class StepLimitExceeded(Exception):
-    pass
+from src.llm.client import BudgetExceeded
 
 
 class ReActAgent(ABC):
-    def __init__(self, agent_name: str, max_steps: int = 8, max_tokens: int = 40_000, max_seconds: int = 120):
+    def __init__(
+        self,
+        agent_name: str,
+        max_steps: int | None = None,
+        max_tokens: int | None = None,
+        max_seconds: int | None = None,
+    ):
+        limits = load_settings()["agent_limits"]
         self.agent_name = agent_name
-        self.max_steps = max_steps
-        self.max_tokens = max_tokens
-        self.max_seconds = max_seconds
+        self.max_steps = max_steps if max_steps is not None else limits["max_steps"]
+        self.max_tokens = max_tokens if max_tokens is not None else limits["max_tokens"]
+        self.max_seconds = max_seconds if max_seconds is not None else limits["max_seconds"]
+        self._tokens_used = 0
+        self._tokens_in = 0
+        self._tokens_out = 0
+        self._cost_usd = 0.0
+
+    def note_llm_usage(self, tokens_in: int, tokens_out: int, cost_usd: float) -> None:
+        self._tokens_in += tokens_in
+        self._tokens_out += tokens_out
+        self._tokens_used += tokens_in + tokens_out
+        self._cost_usd += cost_usd
 
     @abstractmethod
     def tools(self) -> dict:
@@ -34,7 +49,6 @@ class ReActAgent(ABC):
             run_id = run.id
 
         history: list[dict] = []
-        tokens_used = 0
         started = time.monotonic()
         status = "ok"
         step_no = 0
@@ -44,7 +58,7 @@ class ReActAgent(ABC):
                 if time.monotonic() - started > self.max_seconds:
                     status = "step_limit"
                     break
-                if tokens_used > self.max_tokens:
+                if self._tokens_used > self.max_tokens:
                     status = "step_limit"
                     break
 
@@ -54,10 +68,10 @@ class ReActAgent(ABC):
 
                 tool_name = action["tool_name"]
                 tool_args = action.get("tool_args", {})
-                tool = self.tools()[tool_name]
 
                 tool_started = time.monotonic()
                 try:
+                    tool = self.tools()[tool_name]
                     result = tool(**tool_args)
                     tool_ok = True
                 except Exception as exc:  # noqa: BLE001 — recorded, not swallowed silently
@@ -81,14 +95,28 @@ class ReActAgent(ABC):
                 history.append({"thought": action.get("thought"), "tool_name": tool_name, "tool_args": tool_args, "result": result})
             else:
                 status = "step_limit"
+        except BudgetExceeded as exc:
+            status = "budget_stop"
+            with session_scope() as session:
+                finish_agent_run(
+                    session, run_id, status=status, steps_count=len(history), error=str(exc),
+                    tokens_in=self._tokens_in, tokens_out=self._tokens_out, cost_usd=self._cost_usd,
+                )
+            raise
         except Exception as exc:  # noqa: BLE001
             status = "failed"
             with session_scope() as session:
-                finish_agent_run(session, run_id, status=status, steps_count=step_no, error=str(exc))
+                finish_agent_run(
+                    session, run_id, status=status, steps_count=len(history), error=str(exc),
+                    tokens_in=self._tokens_in, tokens_out=self._tokens_out, cost_usd=self._cost_usd,
+                )
             raise
 
         with session_scope() as session:
-            finish_agent_run(session, run_id, status=status, steps_count=step_no)
+            finish_agent_run(
+                session, run_id, status=status, steps_count=len(history),
+                tokens_in=self._tokens_in, tokens_out=self._tokens_out, cost_usd=self._cost_usd,
+            )
             # session.get() returns the same identity-mapped instance that
             # finish_agent_run just mutated, so this reflects the pending
             # (not-yet-flushed) status/steps_count update. Do NOT call
