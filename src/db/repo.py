@@ -3,7 +3,7 @@ from datetime import date, datetime, timezone
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from src.db.models import AgentRun, AgentStep, DailyLimit, DailySpend, LlmCall
+from src.db.models import AgentRun, AgentStep, DailyLimit, DailySpend, LlmCall, SwipeFilePost
 
 
 def get_month_to_date_cost_usd(session: Session, today: date | None = None) -> float:
@@ -72,3 +72,16 @@ def finish_agent_run(session: Session, run_id: int, status: str, **fields) -> No
     run.finished_at = datetime.now(timezone.utc)
     for key, value in fields.items():
         setattr(run, key, value)
+
+
+def swipe_file_post_exists(session: Session, threads_post_id: str) -> bool:
+    return session.execute(
+        select(SwipeFilePost.id).where(SwipeFilePost.threads_post_id == threads_post_id)
+    ).scalar_one_or_none() is not None
+
+
+def insert_swipe_file_post(session: Session, **fields) -> SwipeFilePost:
+    post = SwipeFilePost(**fields)
+    session.add(post)
+    session.flush()
+    return post
