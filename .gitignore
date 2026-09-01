@@ -1,1 +1,15 @@
 .worktrees/
+__pycache__/
+*.pyc
+.venv/
+.env
+data/
+*.egg-info/
+.pytest_cache/
+docker-compose.override.yml
+
+# Side-effect dirs created at import time by threads_app's common/config.py
+# (os.makedirs("logs"/"data"/"screenshots") relative to CWD) whenever
+# src/threads/read_client.py's module-level sys.path import chain runs.
+logs/
+screenshots/
