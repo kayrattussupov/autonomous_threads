@@ -61,7 +61,7 @@ class StyleVariant(Base):
     created_by: Mapped[str] = mapped_column(Text, nullable=False)
     parent_id: Mapped[int | None] = mapped_column(ForeignKey("style_variants.id"))
     rationale: Mapped[str | None] = mapped_column(Text)
-    posts_n: Mapped[int] = mapped_column(Integer, default=0)
+    posts_n: Mapped[int | None] = mapped_column(Integer, server_default="0")
     median_score: Mapped[float | None] = mapped_column(Numeric)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -74,7 +74,7 @@ class PlaybookRule(Base):
     status: Mapped[str] = mapped_column(Text, nullable=False)
     hypothesis: Mapped[str | None] = mapped_column(Text)
     target_metric: Mapped[str | None] = mapped_column(Text)
-    evidence_n: Mapped[int] = mapped_column(Integer, default=0)
+    evidence_n: Mapped[int | None] = mapped_column(Integer, server_default="0")
     median_before: Mapped[float | None] = mapped_column(Numeric)
     median_after: Mapped[float | None] = mapped_column(Numeric)
     version: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -94,7 +94,7 @@ class Reply(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     threads_reply_id: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
-    post_id: Mapped[int | None] = mapped_column(ForeignKey("posts.id"))
+    post_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("posts.id"))
     author_username: Mapped[str | None] = mapped_column(Text)
     text: Mapped[str | None] = mapped_column(Text)
     kind: Mapped[str | None] = mapped_column(Text)
@@ -125,10 +125,10 @@ class AgentRun(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     status: Mapped[str] = mapped_column(Text, nullable=False)
-    steps_count: Mapped[int] = mapped_column(Integer, default=0)
-    tokens_in: Mapped[int] = mapped_column(Integer, default=0)
-    tokens_out: Mapped[int] = mapped_column(Integer, default=0)
-    cost_usd: Mapped[float] = mapped_column(Numeric(10, 6), default=0)
+    steps_count: Mapped[int | None] = mapped_column(Integer, server_default="0")
+    tokens_in: Mapped[int | None] = mapped_column(Integer, server_default="0")
+    tokens_out: Mapped[int | None] = mapped_column(Integer, server_default="0")
+    cost_usd: Mapped[float | None] = mapped_column(Numeric(10, 6), server_default="0")
     error: Mapped[str | None] = mapped_column(Text)
     output_ref: Mapped[str | None] = mapped_column(Text)
 
@@ -139,7 +139,7 @@ class AgentStep(Base):
     __tablename__ = "agent_steps"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    run_id: Mapped[int] = mapped_column(ForeignKey("agent_runs.id", ondelete="CASCADE"))
+    run_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("agent_runs.id", ondelete="CASCADE"))
     step_no: Mapped[int] = mapped_column(Integer, nullable=False)
     thought: Mapped[str | None] = mapped_column(Text)
     tool_name: Mapped[str | None] = mapped_column(Text)
@@ -156,7 +156,7 @@ class LlmCall(Base):
     __tablename__ = "llm_calls"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    run_id: Mapped[int | None] = mapped_column(ForeignKey("agent_runs.id", ondelete="CASCADE"))
+    run_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("agent_runs.id", ondelete="CASCADE"))
     step_no: Mapped[int | None] = mapped_column(Integer)
     role: Mapped[str] = mapped_column(Text, nullable=False)
     provider: Mapped[str] = mapped_column(Text, nullable=False)
@@ -187,4 +187,4 @@ class DailyLimit(Base):
 
     date: Mapped[Date] = mapped_column(Date, primary_key=True)
     counter: Mapped[str] = mapped_column(Text, primary_key=True)
-    value: Mapped[int] = mapped_column(Integer, default=0)
+    value: Mapped[int | None] = mapped_column(Integer, server_default="0")
