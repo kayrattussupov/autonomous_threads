@@ -45,6 +45,8 @@ def main() -> None:
         views = likes = replies_count = quotes = 0
         published_at = fields.get("PublishedAt")
         posted_dt = datetime.fromisoformat(published_at) if published_at else None
+        if posted_dt and posted_dt.tzinfo is None:
+            posted_dt = posted_dt.replace(tzinfo=timezone.utc)
         if posted_dt and posted_dt >= cutoff:
             try:
                 insights = write_client.get_media_insights(media_id)
