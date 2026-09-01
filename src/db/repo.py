@@ -6,6 +6,14 @@ from sqlalchemy.orm import Session
 from src.db.models import AgentRun, AgentStep, DailyLimit, DailySpend, LlmCall
 
 
+class InvalidStateTransition(Exception):
+    """Raised when approve/reject targets a row that isn't in its expected pending state."""
+
+
+class RetirementBlocked(Exception):
+    """Raised when approving a style variant would retire another one with posts_n < 20."""
+
+
 def get_month_to_date_cost_usd(session: Session, today: date | None = None) -> float:
     today = today or datetime.now(timezone.utc).date()
     month_start = today.replace(day=1)
