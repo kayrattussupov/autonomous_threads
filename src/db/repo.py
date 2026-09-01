@@ -3,7 +3,7 @@ from datetime import date, datetime, timezone
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from src.db.models import DailyLimit, DailySpend, LlmCall
+from src.db.models import AgentRun, AgentStep, DailyLimit, DailySpend, LlmCall
 
 
 def get_month_to_date_cost_usd(session: Session, today: date | None = None) -> float:
@@ -50,3 +50,25 @@ def increment_daily_limit(session: Session, counter: str, by: int = 1, today: da
     row.value = (row.value or 0) + by
     session.flush()
     return row.value
+
+
+def start_agent_run(session: Session, agent: str, trigger: str) -> AgentRun:
+    run = AgentRun(agent=agent, trigger=trigger, started_at=datetime.now(timezone.utc), status="running")
+    session.add(run)
+    session.flush()
+    return run
+
+
+def add_agent_step(session: Session, run_id: int, step_no: int, **fields) -> AgentStep:
+    step = AgentStep(run_id=run_id, step_no=step_no, **fields)
+    session.add(step)
+    session.flush()
+    return step
+
+
+def finish_agent_run(session: Session, run_id: int, status: str, **fields) -> None:
+    run = session.get(AgentRun, run_id)
+    run.status = status
+    run.finished_at = datetime.now(timezone.utc)
+    for key, value in fields.items():
+        setattr(run, key, value)
