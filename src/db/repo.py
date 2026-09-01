@@ -3,7 +3,7 @@ from datetime import date, datetime, timezone
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from src.db.models import DailySpend, LlmCall
+from src.db.models import DailyLimit, DailySpend, LlmCall
 
 
 def get_month_to_date_cost_usd(session: Session, today: date | None = None) -> float:
@@ -33,3 +33,20 @@ def upsert_daily_spend(session: Session, model: str, tokens_in: int, tokens_out:
     row.tokens_in = (row.tokens_in or 0) + tokens_in
     row.tokens_out = (row.tokens_out or 0) + tokens_out
     row.cost_usd = float(row.cost_usd or 0) + cost_usd
+
+
+def get_daily_limit(session: Session, counter: str, today: date | None = None) -> int:
+    today = today or datetime.now(timezone.utc).date()
+    row = session.get(DailyLimit, {"date": today, "counter": counter})
+    return row.value if row else 0
+
+
+def increment_daily_limit(session: Session, counter: str, by: int = 1, today: date | None = None) -> int:
+    today = today or datetime.now(timezone.utc).date()
+    row = session.get(DailyLimit, {"date": today, "counter": counter})
+    if row is None:
+        row = DailyLimit(date=today, counter=counter, value=0)
+        session.add(row)
+    row.value = (row.value or 0) + by
+    session.flush()
+    return row.value
