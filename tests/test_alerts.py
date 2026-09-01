@@ -1,6 +1,7 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
 
 from src.alerts import send_telegram_alert
 
@@ -36,7 +37,7 @@ def test_send_telegram_alert_returns_false_on_network_error(monkeypatch):
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-token")
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "12345")
 
-    with patch("src.alerts.requests.post", side_effect=ConnectionError("no network")):
+    with patch("src.alerts.requests.post", side_effect=requests.exceptions.ConnectionError("no network")):
         result = send_telegram_alert("test")
 
     assert result is False

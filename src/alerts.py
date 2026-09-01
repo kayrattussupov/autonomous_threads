@@ -21,7 +21,7 @@ def send_telegram_alert(text: str) -> bool:
             json={"chat_id": chat_id, "text": text},
             timeout=10,
         )
-    except Exception:
+    except requests.RequestException:
         logger.exception("Telegram alert failed to send: %s", text)
         return False
 
