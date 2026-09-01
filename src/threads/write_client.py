@@ -90,7 +90,15 @@ class ThreadsWriteClient:
     def check_publishing_limit(self, kind: str = "posts") -> dict:
         data = self._request("get", f"{self._user_id}/threads_publishing_limit")
         entry = data["data"][0]
-        usage, total = entry["quota_usage"], entry["config"]["quota_total"]
+        if kind == "replies":
+            # Best-effort field names for the reply quota — NOT verified against a live
+            # Threads API response (no credentials available at implementation time).
+            # Confirm against real data during Task 7's Step 5 live smoke test, and fix
+            # the field names here if the actual API response shape differs.
+            usage = entry.get("reply_quota_usage", entry.get("quota_usage"))
+            total = entry.get("reply_config", entry.get("config"))["quota_total"]
+        else:
+            usage, total = entry["quota_usage"], entry["config"]["quota_total"]
         if usage >= total:
             raise PublishingLimitExceeded(f"{kind} limit exhausted: {usage}/{total} in the current 24h window")
         return {"usage": usage, "total": total}
