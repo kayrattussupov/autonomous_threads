@@ -1,11 +1,8 @@
 from unittest.mock import MagicMock, patch
 
-import pytest
 import requests
 
 from src.alerts import send_telegram_alert
-
-pytestmark = pytest.mark.no_db
 
 
 def test_send_telegram_alert_success(monkeypatch):

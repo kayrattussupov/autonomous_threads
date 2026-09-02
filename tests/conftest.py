@@ -11,14 +11,10 @@ from src.db.models import Base
 
 @pytest.fixture(scope="session", autouse=True)
 def _create_schema():
-    try:
-        engine = get_engine()
-        Base.metadata.create_all(engine)
-        yield
-        Base.metadata.drop_all(engine)
-    except Exception:
-        # Database not available, skip schema creation
-        yield
+    engine = get_engine()
+    Base.metadata.create_all(engine)
+    yield
+    Base.metadata.drop_all(engine)
 
 
 @pytest.fixture()
