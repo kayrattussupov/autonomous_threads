@@ -4,6 +4,7 @@ import pytest
 from sqlalchemy import text
 
 os.environ.setdefault("DATABASE_URL", "postgresql+psycopg://threads_agent:changeme@localhost:5432/threads_agent_test")
+os.environ.setdefault("API_BEARER_TOKEN", "test-token")
 
 from src.db.engine import get_engine, get_sessionmaker
 from src.db.models import Base
