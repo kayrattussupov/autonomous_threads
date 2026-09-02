@@ -2,9 +2,16 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
 from src.agents.publisher import publish_scheduled_posts
-from src.db.models import AgentRun, Post
+from src.db.models import AgentRun, Post, StyleVariant
 from src.db.repo import insert_post
 from src.threads.write_client import PublishingLimitExceeded, ThreadsAPIError
+
+
+def _seed_active_style(db_session, name="v1", genome="GENOME_TEXT") -> StyleVariant:
+    variant = StyleVariant(name=name, genome=genome, status="active", created_by="human", posts_n=0)
+    db_session.add(variant)
+    db_session.commit()
+    return variant
 
 
 class _FakeWriteClient:
@@ -29,7 +36,7 @@ def test_publish_scheduled_posts_publishes_due_posts(db_session):
     write_client = _FakeWriteClient(media_id="abc123")
     result = publish_scheduled_posts(trigger="manual", write_client=write_client)
 
-    assert result == {"published": 1, "failed": 0}
+    assert result == {"published": 1, "failed": 0, "blocked": 0}
     assert write_client.published_texts == ["due now"]
 
     published = db_session.query(Post).filter_by(text="due now").one()
@@ -52,7 +59,7 @@ def test_publish_scheduled_posts_marks_failed_and_alerts_on_api_error(db_session
 
     result = publish_scheduled_posts(trigger="manual", write_client=write_client)
 
-    assert result == {"published": 0, "failed": 1}
+    assert result == {"published": 0, "failed": 1, "blocked": 0}
     failed_post = db_session.query(Post).filter_by(text="will fail").one()
     assert failed_post.status == "failed"
     alert_mock.assert_called_once()
@@ -76,7 +83,7 @@ def test_publish_scheduled_posts_stops_on_publishing_limit_exceeded(db_session, 
     # stay "scheduled" so the next publisher_every_10_min run retries it
     # (Block 4's dashboard reads `status` as real signal, so a never-attempted
     # post must not be mislabeled "failed").
-    assert result == {"published": 0, "failed": 1}
+    assert result == {"published": 0, "failed": 1, "blocked": 0}
     failed_post = db_session.query(Post).filter_by(text="post 1").one()
     assert failed_post.status == "failed"
     untouched_post = db_session.query(Post).filter_by(text="post 2").one()
@@ -94,3 +101,64 @@ def test_publish_scheduled_posts_traces_to_agent_runs(db_session):
     run = db_session.query(AgentRun).filter_by(agent="content_publisher").one()
     assert run.status == "ok"
     assert run.finished_at is not None
+
+
+def test_publish_scheduled_posts_blocks_placeholder_style_variant(db_session, monkeypatch):
+    monkeypatch.delenv("ALLOW_PLACEHOLDER_GENOME", raising=False)
+    placeholder = _seed_active_style(db_session, name="v1_placeholder", genome="PLACEHOLDER TEXT")
+    now = datetime.now(timezone.utc)
+    insert_post(
+        db_session, text="placeholder voice post", category="educational", status="scheduled",
+        scheduled_at=now - timedelta(minutes=1), style_variant_id=placeholder.id,
+    )
+    db_session.commit()
+
+    alert_mock = MagicMock(return_value=True)
+    monkeypatch.setattr("src.agents.publisher.send_telegram_alert", alert_mock)
+    write_client = _FakeWriteClient()
+
+    result = publish_scheduled_posts(trigger="manual", write_client=write_client)
+
+    assert result == {"published": 0, "failed": 0, "blocked": 1}
+    assert write_client.published_texts == []
+    blocked_post = db_session.query(Post).filter_by(text="placeholder voice post").one()
+    assert blocked_post.status == "scheduled"
+    alert_mock.assert_called_once()
+
+
+def test_publish_scheduled_posts_allows_placeholder_when_override_set(db_session, monkeypatch):
+    monkeypatch.setenv("ALLOW_PLACEHOLDER_GENOME", "1")
+    placeholder = _seed_active_style(db_session, name="v1_placeholder", genome="PLACEHOLDER TEXT")
+    now = datetime.now(timezone.utc)
+    insert_post(
+        db_session, text="placeholder voice post", category="educational", status="scheduled",
+        scheduled_at=now - timedelta(minutes=1), style_variant_id=placeholder.id,
+    )
+    db_session.commit()
+
+    write_client = _FakeWriteClient(media_id="override-123")
+    result = publish_scheduled_posts(trigger="manual", write_client=write_client)
+
+    assert result == {"published": 1, "failed": 0, "blocked": 0}
+    assert write_client.published_texts == ["placeholder voice post"]
+    published_post = db_session.query(Post).filter_by(text="placeholder voice post").one()
+    assert published_post.status == "published"
+
+
+def test_publish_scheduled_posts_unaffected_by_non_placeholder_style(db_session, monkeypatch):
+    monkeypatch.delenv("ALLOW_PLACEHOLDER_GENOME", raising=False)
+    variant = _seed_active_style(db_session, name="v1_real", genome="REAL VOICE")
+    now = datetime.now(timezone.utc)
+    insert_post(
+        db_session, text="real voice post", category="educational", status="scheduled",
+        scheduled_at=now - timedelta(minutes=1), style_variant_id=variant.id,
+    )
+    db_session.commit()
+
+    write_client = _FakeWriteClient(media_id="real-123")
+    result = publish_scheduled_posts(trigger="manual", write_client=write_client)
+
+    assert result == {"published": 1, "failed": 0, "blocked": 0}
+    assert write_client.published_texts == ["real voice post"]
+    published_post = db_session.query(Post).filter_by(text="real voice post").one()
+    assert published_post.status == "published"

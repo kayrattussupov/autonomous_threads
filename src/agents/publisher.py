@@ -6,6 +6,12 @@ from src.db.engine import session_scope
 from src.db.repo import add_agent_step, finish_agent_run, get_posts_due_for_publish, start_agent_run
 from src.threads.write_client import PublishingLimitExceeded, ThreadsAPIError, ThreadsWriteClient
 
+PLACEHOLDER_STYLE_VARIANT_NAME = "v1_placeholder"
+
+
+def _placeholder_genome_allowed() -> bool:
+    return os.environ.get("ALLOW_PLACEHOLDER_GENOME", "").strip().lower() in {"1", "true", "yes"}
+
 
 def publish_scheduled_posts(trigger: str = "cron", write_client: ThreadsWriteClient | None = None) -> dict:
     """Deterministic, not a ReActAgent — mirrors feed_miner's shape (Block 2).
@@ -17,7 +23,7 @@ def publish_scheduled_posts(trigger: str = "cron", write_client: ThreadsWriteCli
         run = start_agent_run(session, agent="content_publisher", trigger=trigger)
         run_id = run.id
 
-    published, failed = 0, 0
+    published, failed, blocked = 0, 0, 0
     status = "ok"
     error = None
     step_no = 0
@@ -29,9 +35,20 @@ def publish_scheduled_posts(trigger: str = "cron", write_client: ThreadsWriteCli
         for post_id in due_post_ids:
             step_no += 1
             with session_scope() as session:
-                from src.db.models import Post
+                from src.db.models import Post, StyleVariant
                 post = session.get(Post, post_id)
                 text = post.text
+                style_variant = session.get(StyleVariant, post.style_variant_id) if post.style_variant_id is not None else None
+
+            if style_variant is not None and style_variant.name == PLACEHOLDER_STYLE_VARIANT_NAME and not _placeholder_genome_allowed():
+                blocked += 1
+                tool_result = (
+                    "blocked: active style_variant is the placeholder (v1_placeholder) — "
+                    "replace its genome before real posting, or set ALLOW_PLACEHOLDER_GENOME=1 to override"
+                )
+                with session_scope() as session:
+                    add_agent_step(session, run_id=run_id, step_no=step_no, tool_name="publish_text_post", tool_args={"post_id": post_id}, tool_result=tool_result, tool_ok=False)
+                continue
 
             tool_ok = True
             tool_result = None
@@ -78,7 +95,14 @@ def publish_scheduled_posts(trigger: str = "cron", write_client: ThreadsWriteCli
         error = str(exc)
         send_telegram_alert(f"content_publisher: остановлен (неожиданная ошибка): {exc}")
 
-    with session_scope() as session:
-        finish_agent_run(session, run_id, status=status, steps_count=step_no, error=error, output_ref=f"published={published} failed={failed}")
+    if blocked:
+        send_telegram_alert(
+            f"content_publisher: реальная публикация заблокирована — активный style_variant "
+            f"это placeholder (v1_placeholder), заблокировано постов: {blocked}. "
+            f"Замените genome перед реальной публикацией, или установите ALLOW_PLACEHOLDER_GENOME=1."
+        )
 
-    return {"published": published, "failed": failed}
+    with session_scope() as session:
+        finish_agent_run(session, run_id, status=status, steps_count=step_no, error=error, output_ref=f"published={published} failed={failed} blocked={blocked}")
+
+    return {"published": published, "failed": failed, "blocked": blocked}
