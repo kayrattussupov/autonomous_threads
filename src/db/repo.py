@@ -3,7 +3,7 @@ from datetime import date, datetime, timezone
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from src.db.models import AgentRun, AgentStep, DailyLimit, DailySpend, LlmCall, Post
+from src.db.models import AgentRun, AgentStep, DailyLimit, DailySpend, LlmCall, Post, StyleVariant
 
 
 class InvalidStateTransition(Exception):
@@ -138,3 +138,39 @@ def list_agent_runs(session: Session, limit: int = 50) -> list[AgentRun]:
 def list_agent_steps(session: Session, run_id: int) -> list[AgentStep]:
     stmt = select(AgentStep).where(AgentStep.run_id == run_id).order_by(AgentStep.step_no.asc())
     return list(session.execute(stmt).scalars().all())
+
+
+def list_style_variants(session: Session) -> list[StyleVariant]:
+    stmt = select(StyleVariant).order_by(StyleVariant.created_at.desc())
+    return list(session.execute(stmt).scalars().all())
+
+
+def approve_style_variant(session: Session, variant_id: int) -> StyleVariant:
+    variant = session.get(StyleVariant, variant_id)
+    if variant is None or variant.status != "draft":
+        raise InvalidStateTransition(f"style_variant {variant_id} is not in a pending 'draft' state")
+
+    active = list(session.execute(select(StyleVariant).where(StyleVariant.status == "active")).scalars().all())
+    if len(active) >= 2:
+        def _score(v: StyleVariant) -> float:
+            return float(v.median_score) if v.median_score is not None else float("-inf")
+
+        worst = min(active, key=_score)
+        if (worst.posts_n or 0) < 20:
+            raise RetirementBlocked(
+                f"cannot retire style_variant {worst.id}: posts_n={worst.posts_n or 0} < 20"
+            )
+        worst.status = "retired"
+
+    variant.status = "active"
+    session.flush()
+    return variant
+
+
+def reject_style_variant(session: Session, variant_id: int) -> StyleVariant:
+    variant = session.get(StyleVariant, variant_id)
+    if variant is None or variant.status != "draft":
+        raise InvalidStateTransition(f"style_variant {variant_id} is not in a pending 'draft' state")
+    variant.status = "rejected"
+    session.flush()
+    return variant
