@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -199,8 +199,15 @@ def reject_playbook_rule(session: Session, rule_id: int) -> PlaybookRule:
     return rule
 
 
+def _months_ago_start(months: int, today: date | None = None) -> datetime:
+    today = today or datetime.now(timezone.utc).date()
+    total_months = today.year * 12 + (today.month - 1) - (months - 1)
+    year, month = divmod(total_months, 12)
+    return datetime(year, month + 1, 1, tzinfo=timezone.utc)
+
+
 def get_funnel(session: Session, months: int = 6) -> list[dict]:
-    since = datetime.now(timezone.utc) - timedelta(days=31 * months)
+    since = _months_ago_start(months)
 
     def _key(dt: datetime) -> str:
         return dt.strftime("%Y-%m")

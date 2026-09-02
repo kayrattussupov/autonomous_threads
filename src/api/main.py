@@ -4,7 +4,7 @@ from fastapi.responses import JSONResponse
 from src.api.routers import funnel, playbook, posts, runs, spend, styles
 from src.db.repo import InvalidStateTransition, RetirementBlocked
 
-app = FastAPI()
+app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 app.include_router(posts.router)
 app.include_router(runs.router)
 app.include_router(styles.router)
