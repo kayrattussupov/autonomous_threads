@@ -36,7 +36,7 @@ def test_approve_retires_worse_median_active_variant_when_guard_satisfied(db_ses
     weak = StyleVariant(name="weak", genome="g", status="active", created_by="human", posts_n=25, median_score=10)
     strong = StyleVariant(name="strong", genome="g", status="active", created_by="human", posts_n=25, median_score=50)
     candidate = StyleVariant(name="candidate", genome="g", status="draft", created_by="analyst", rationale="radical rewrite")
-    db_session.add_all([weak, strong, candidate])
+    db_session.add_all([strong, weak, candidate])
     db_session.commit()
 
     response = client.post(f"/styles/{candidate.id}/approve", headers=AUTH)
