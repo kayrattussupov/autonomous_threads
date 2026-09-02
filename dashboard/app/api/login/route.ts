@@ -2,16 +2,17 @@ import { NextRequest, NextResponse } from "next/server";
 
 function safeNext(next: FormDataEntryValue | null, requestUrl: string): string {
   if (typeof next !== "string") return "/";
+  let candidate: URL;
   try {
-    const candidate = new URL(next, requestUrl);
-    const base = new URL(requestUrl);
-    if (candidate.origin === base.origin) {
-      return candidate.pathname + candidate.search + candidate.hash;
-    }
+    candidate = new URL(next, requestUrl);
   } catch {
-    // malformed URL — fall through to default
+    return "/";
   }
-  return "/";
+  const base = new URL(requestUrl);
+  if (candidate.origin !== base.origin) return "/";
+  const path = candidate.pathname + candidate.search + candidate.hash;
+  if (!path.startsWith("/") || path.startsWith("//")) return "/";
+  return path;
 }
 
 export async function POST(request: NextRequest) {
