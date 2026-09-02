@@ -4,12 +4,12 @@ const COOKIE_NAME = "dashboard_auth";
 const PUBLIC_PATHS = ["/login", "/api/login"];
 
 export function middleware(request: NextRequest) {
-  if (PUBLIC_PATHS.some((path) => request.nextUrl.pathname.startsWith(path))) {
+  if (PUBLIC_PATHS.some((path) => request.nextUrl.pathname === path || request.nextUrl.pathname.startsWith(path + "/"))) {
     return NextResponse.next();
   }
 
   const cookie = request.cookies.get(COOKIE_NAME);
-  if (cookie?.value === process.env.DASHBOARD_PASSWORD) {
+  if (process.env.DASHBOARD_PASSWORD && cookie?.value === process.env.DASHBOARD_PASSWORD) {
     return NextResponse.next();
   }
 

@@ -1,9 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 
+function safeNext(next: FormDataEntryValue | null): string {
+  if (typeof next === "string" && next.startsWith("/") && !next.startsWith("//")) {
+    return next;
+  }
+  return "/";
+}
+
 export async function POST(request: NextRequest) {
   const formData = await request.formData();
   const password = formData.get("password");
-  const next = (formData.get("next") as string | null) || "/";
+  const next = safeNext(formData.get("next"));
 
   if (typeof password !== "string" || password !== process.env.DASHBOARD_PASSWORD) {
     const url = new URL("/login", request.url);
