@@ -56,6 +56,9 @@ def test_run_feed_miner_collects_classifies_and_dedups(db_session, monkeypatch):
     run = db_session.query(AgentRun).filter_by(agent="feed_miner").one()
     assert run.status == "ok"
     assert run.trigger == "manual"
+    assert run.tokens_in == 20
+    assert run.tokens_out == 4
+    assert run.cost_usd == 0
 
 
 def test_run_feed_miner_skips_already_seen_posts(db_session, monkeypatch):
@@ -122,6 +125,9 @@ def test_run_feed_miner_finishes_run_on_budget_exceeded(db_session, monkeypatch)
         "src.agents.feed_miner.load_settings",
         lambda: {"search_groups": [{"name": "g1", "keywords": ["n8n"]}]},
     )
+    alert_mock = MagicMock(return_value=True)
+    monkeypatch.setattr("src.agents.feed_miner.send_telegram_alert", alert_mock)
+
     read_client = _FakeReadClient({
         "n8n": [{"keyword": "n8n", "text": "Пост 1", "url": "https://threads.net/post/aaa/"}]
     })
@@ -137,3 +143,47 @@ def test_run_feed_miner_finishes_run_on_budget_exceeded(db_session, monkeypatch)
     run = db_session.query(AgentRun).filter_by(agent="feed_miner").one()
     assert run.status == "budget_stop"
     assert run.finished_at is not None
+
+    alert_mock.assert_called_once()
+    assert "budget" in alert_mock.call_args[0][0].lower()
+
+
+def test_run_feed_miner_alerts_and_fails_cleanly_on_unexpected_error(db_session, monkeypatch):
+    monkeypatch.setattr("src.agents.feed_miner.load_settings", lambda: {})  # missing "search_groups"
+    alert_mock = MagicMock(return_value=True)
+    monkeypatch.setattr("src.agents.feed_miner.send_telegram_alert", alert_mock)
+
+    read_client = _FakeReadClient({})
+    llm_client = _FakeLLMClient()
+
+    result = run_feed_miner(trigger="manual", read_client=read_client, llm_client=llm_client)
+
+    assert result["status"] == "failed"
+    alert_mock.assert_called_once()
+    assert "unexpected error" in alert_mock.call_args[0][0].lower()
+
+    run = db_session.query(AgentRun).filter_by(agent="feed_miner").one()
+    assert run.status == "failed"
+    assert run.finished_at is not None
+
+
+def test_run_feed_miner_skips_malformed_post_without_aborting(db_session, monkeypatch):
+    monkeypatch.setattr(
+        "src.agents.feed_miner.load_settings",
+        lambda: {"search_groups": [{"name": "g1", "keywords": ["n8n"]}]},
+    )
+    read_client = _FakeReadClient({
+        "n8n": [
+            {"keyword": "n8n", "url": "https://threads.net/post/aaa/"},  # missing "text"
+            {"keyword": "n8n", "text": "Пост 2", "url": "https://threads.net/post/bbb/"},
+        ]
+    })
+    llm_client = _FakeLLMClient(topic="автоматизация")
+
+    result = run_feed_miner(trigger="manual", read_client=read_client, llm_client=llm_client)
+
+    assert result == {"collected": 1, "skipped_dupes": 0, "status": "ok"}
+    assert llm_client.calls == ["classifier"]
+
+    rows = db_session.query(SwipeFilePost).all()
+    assert [r.threads_post_id for r in rows] == ["bbb"]

@@ -35,14 +35,13 @@ def _derive_post_id(url: str, text: str) -> str:
     return hashlib.md5(text.encode("utf-8")).hexdigest()
 
 
-def _classify_topic(llm_client: LLMClient, text: str, run_id: int, step_no: int) -> str:
-    response = llm_client.complete(
+def _classify_topic(llm_client: LLMClient, text: str, run_id: int, step_no: int):
+    return llm_client.complete(
         role="classifier",
         messages=[{"role": "user", "content": CLASSIFIER_PROMPT.format(text=text)}],
         run_id=run_id,
         step_no=step_no,
     )
-    return response.text.strip()
 
 
 def run_feed_miner(
@@ -66,10 +65,13 @@ def run_feed_miner(
     step_no = 0
     status = "ok"
     error = None
-
-    search_groups = load_settings()["search_groups"]
+    tokens_in = 0
+    tokens_out = 0
+    cost_usd = 0.0
 
     try:
+        search_groups = load_settings()["search_groups"]
+
         for group in search_groups:
             if status == "failed":
                 break
@@ -80,18 +82,26 @@ def run_feed_miner(
                 try:
                     posts = read_client.search_keyword(keyword)
                     for post in posts:
-                        post_id = _derive_post_id(post["url"], post["text"])
+                        text = post.get("text")
+                        if not text:
+                            continue  # malformed post — skip it, don't abort the run
+                        url = post.get("url", "")
+                        post_id = _derive_post_id(url, text)
                         with session_scope() as session:
                             already_seen = swipe_file_post_exists(session, post_id)
                         if already_seen:
                             skipped_dupes += 1
                             continue
-                        topic = _classify_topic(llm_client, post["text"], run_id, step_no)
+                        classification = _classify_topic(llm_client, text, run_id, step_no)
+                        tokens_in += classification.tokens_in
+                        tokens_out += classification.tokens_out
+                        cost_usd += classification.cost_usd
+                        topic = classification.text.strip()
                         with session_scope() as session:
                             insert_swipe_file_post(
                                 session,
                                 threads_post_id=post_id,
-                                text=post["text"],
+                                text=text,
                                 topic=topic,
                             )
                         collected += 1
@@ -119,9 +129,11 @@ def run_feed_miner(
     except BudgetExceeded as exc:
         status = "budget_stop"
         error = str(exc)
+        send_telegram_alert(f"feed_miner stopped (budget exceeded): {exc}")
     except Exception as exc:  # noqa: BLE001 — recorded, not swallowed silently
         status = "failed"
         error = str(exc)
+        send_telegram_alert(f"feed_miner stopped (unexpected error): {exc}")
 
     with session_scope() as session:
         finish_agent_run(
@@ -131,6 +143,9 @@ def run_feed_miner(
             steps_count=step_no,
             error=error,
             output_ref=f"collected={collected} skipped_dupes={skipped_dupes}",
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
+            cost_usd=cost_usd,
         )
 
     return {"collected": collected, "skipped_dupes": skipped_dupes, "status": status}
