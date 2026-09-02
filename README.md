@@ -63,7 +63,41 @@ Autonomous Threads-posting agent. See `SPEC.md` for the full design.
    calls `ThreadsReadClient.search_keyword()` runs; importing this codebase does not
    require it.
 
-5. **Running tests**
+5. **Content generation (Block 3) setup**
+
+   `content_agent` needs two one-time (idempotent) seed scripts run against
+   the database before it can produce posts, and a search API key for its
+   `category='news'` research tool:
+
+   ```
+   python -m scripts.seed_knowledge_base
+   python -m scripts.seed_style_variant_v1
+   ```
+
+   `seed_knowledge_base` loads the Layer 2 starter knowledge base
+   (`SPEC.md` §7). `seed_style_variant_v1` seeds a Layer 3 style genome so
+   the pipeline is runnable end-to-end.
+
+   Set `TAVILY_API_KEY` in `.env` — `web_search()` (used only for
+   `category='news'` drafts) returns `[]` silently if it's unset, which is
+   safe for testing but means news posts will never get sources in
+   production.
+
+   > **PLACEHOLDER GENOME — DO NOT SKIP:** the style genome seeded by
+   > `seed_style_variant_v1` is explicitly a stand-in
+   > (`style_variants.name='v1_placeholder'`), not the operator's real voice.
+   > `SPEC.md` §7 requires this genome to be human-authored. **Do not let any
+   > real (non-test) post go out until you have replaced it** — the seed
+   > script itself prints the exact statement to run:
+   >
+   > ```
+   > UPDATE style_variants SET genome = '...' WHERE id = <printed id>;
+   > ```
+   >
+   > Replace `'...'` with your actual 300-800 word authored voice before
+   > production posting begins.
+
+6. **Running tests**
 
    Tests need a running Postgres and a `threads_agent_test` database, and read the
    `DATABASE_URL` env var (see `tests/conftest.py` for the default). Example:

@@ -20,6 +20,7 @@ class ReActAgent(ABC):
         self.max_steps = max_steps if max_steps is not None else limits["max_steps"]
         self.max_tokens = max_tokens if max_tokens is not None else limits["max_tokens"]
         self.max_seconds = max_seconds if max_seconds is not None else limits["max_seconds"]
+        self._run_id: int | None = None
         self._tokens_used = 0
         self._tokens_in = 0
         self._tokens_out = 0
@@ -47,6 +48,7 @@ class ReActAgent(ABC):
         with session_scope() as session:
             run = start_agent_run(session, agent=self.agent_name, trigger=trigger)
             run_id = run.id
+            self._run_id = run_id
 
         history: list[dict] = []
         started = time.monotonic()
@@ -74,6 +76,12 @@ class ReActAgent(ABC):
                     tool = self.tools()[tool_name]
                     result = tool(**tool_args)
                     tool_ok = True
+                except BudgetExceeded:
+                    # Must propagate to the outer handler below, which finishes
+                    # the run with status="budget_stop" — do NOT record this as
+                    # an ordinary failed tool step, or the agent will just keep
+                    # retrying for its remaining steps against an exhausted budget.
+                    raise
                 except Exception as exc:  # noqa: BLE001 — recorded, not swallowed silently
                     result = str(exc)
                     tool_ok = False

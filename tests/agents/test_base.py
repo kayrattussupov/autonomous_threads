@@ -4,6 +4,7 @@ import pytest
 
 from src.agents.base import ReActAgent
 from src.db.models import AgentRun, AgentStep
+from src.llm.client import BudgetExceeded
 
 
 class _EchoTool:
@@ -81,6 +82,44 @@ class _FailingToolAgent(ReActAgent):
         return None  # signal: done
 
 
+class _BudgetExceededToolAgent(ReActAgent):
+    """Its one tool raises BudgetExceeded — proves this propagates to the
+    outer handler (status="budget_stop") instead of being swallowed as an
+    ordinary failed tool step by the inner try/except."""
+
+    def __init__(self, **kwargs):
+        super().__init__(agent_name="budget_exceeded_tool_agent", **kwargs)
+
+    def tools(self) -> dict:
+        def _blow_budget(**kwargs):
+            raise BudgetExceeded("month-to-date spend exceeded hard stop")
+
+        return {"spend": _blow_budget}
+
+    def system_prompt(self) -> str:
+        return "test"
+
+    def decide_next_action(self, history: list[dict]) -> dict | None:
+        return {"thought": "spend", "tool_name": "spend", "tool_args": {}}
+
+
+def test_budget_exceeded_inside_tool_call_propagates_to_budget_stop(db_session):
+    agent = _BudgetExceededToolAgent(max_steps=8, max_tokens=40_000, max_seconds=120)
+
+    # ReActAgent.run()'s outer BudgetExceeded handler finishes the run with
+    # status="budget_stop" and then re-raises (mirroring the LLM-call-site
+    # BudgetExceeded path) — it does not return a snapshot in this case.
+    with pytest.raises(BudgetExceeded):
+        agent.run(trigger="manual")
+
+    run_row = db_session.query(AgentRun).filter_by(agent="budget_exceeded_tool_agent").one()
+    assert run_row.status == "budget_stop"
+    # No step should have been recorded as an ordinary failed step for this —
+    # the exception must propagate out of the per-step try/except entirely.
+    steps = db_session.query(AgentStep).filter_by(run_id=run_row.id).all()
+    assert steps == []
+
+
 def test_unknown_and_failing_tool_calls_are_recorded_as_failed_steps(db_session):
     agent = _FailingToolAgent(max_steps=8, max_tokens=40_000, max_seconds=120)
 
@@ -118,3 +157,31 @@ def test_step_limit_stops_at_nine(db_session):
     assert run.steps_count == 8
     fetched = db_session.get(AgentRun, run.id)
     assert fetched.status == "step_limit"
+
+
+def test_run_exposes_run_id_to_subclass(db_session):
+    seen_run_ids = []
+
+    class _RunIdCapturingAgent(ReActAgent):
+        def __init__(self, **kwargs):
+            super().__init__(agent_name="test_run_id", **kwargs)
+            self._step = 0
+
+        def tools(self):
+            return {"noop": lambda: "ok"}
+
+        def system_prompt(self):
+            return "test"
+
+        def decide_next_action(self, history):
+            seen_run_ids.append(self._run_id)
+            self._step += 1
+            if self._step > 1:
+                return None
+            return {"thought": "t", "tool_name": "noop", "tool_args": {}}
+
+    agent = _RunIdCapturingAgent(max_steps=8, max_tokens=40_000, max_seconds=120)
+    run = agent.run(trigger="manual")
+
+    assert seen_run_ids == [run.id, run.id]
+    assert all(rid is not None for rid in seen_run_ids)

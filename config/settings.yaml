@@ -15,3 +15,15 @@ search_groups:
       - "n8n"
       - "ИИ агент для бизнеса"
 ab_test_models: false
+publish_times:
+  - "09:00"
+  - "14:00"
+  - "20:00"
+publish_timezone: "Asia/Almaty"
+post_length:
+  min_chars: 200
+  max_chars: 400
+  hard_max_chars: 500
+search:
+  provider: tavily
+  max_results: 5
