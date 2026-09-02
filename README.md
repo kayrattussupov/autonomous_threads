@@ -76,3 +76,19 @@ Autonomous Threads-posting agent. See `SPEC.md` for the full design.
    Adjust the host/port to match wherever your Postgres container is actually
    reachable (see the port-remap note in step 2 if you're using a
    `docker-compose.override.yml`).
+
+## Dashboard API
+
+Once the stack is up (`docker compose up -d --build`), the dashboard endpoints are
+reachable through Caddy at `https://<host>/posts`, `/runs`, `/runs/{id}/steps`,
+`/styles`, `/playbook`, `/funnel`, `/spend`. Every route except `/health` requires
+`Authorization: Bearer <API_BEARER_TOKEN>` (the same value as your `.env`).
+
+Example:
+
+```
+curl -H "Authorization: Bearer $API_BEARER_TOKEN" https://localhost:8443/posts
+```
+
+See `docs/superpowers/specs/2026-09-01-block-4-dashboard-design.md` for the full
+endpoint list and the frontend that consumes them.
