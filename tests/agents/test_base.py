@@ -118,3 +118,31 @@ def test_step_limit_stops_at_nine(db_session):
     assert run.steps_count == 8
     fetched = db_session.get(AgentRun, run.id)
     assert fetched.status == "step_limit"
+
+
+def test_run_exposes_run_id_to_subclass(db_session):
+    seen_run_ids = []
+
+    class _RunIdCapturingAgent(ReActAgent):
+        def __init__(self, **kwargs):
+            super().__init__(agent_name="test_run_id", **kwargs)
+            self._step = 0
+
+        def tools(self):
+            return {"noop": lambda: "ok"}
+
+        def system_prompt(self):
+            return "test"
+
+        def decide_next_action(self, history):
+            seen_run_ids.append(self._run_id)
+            self._step += 1
+            if self._step > 1:
+                return None
+            return {"thought": "t", "tool_name": "noop", "tool_args": {}}
+
+    agent = _RunIdCapturingAgent(max_steps=8, max_tokens=40_000, max_seconds=120)
+    run = agent.run(trigger="manual")
+
+    assert seen_run_ids == [run.id, run.id]
+    assert all(rid is not None for rid in seen_run_ids)

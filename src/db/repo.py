@@ -3,7 +3,7 @@ from datetime import date, datetime, timezone
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from src.db.models import AgentRun, AgentStep, DailyLimit, DailySpend, LlmCall, SwipeFilePost
+from src.db.models import AgentRun, AgentStep, DailyLimit, DailySpend, KnowledgeBaseEntry, LlmCall, PlaybookRule, Post, StyleVariant, SwipeFilePost
 
 
 def get_month_to_date_cost_usd(session: Session, today: date | None = None) -> float:
@@ -85,3 +85,68 @@ def insert_swipe_file_post(session: Session, **fields) -> SwipeFilePost:
     session.add(post)
     session.flush()
     return post
+
+
+def get_knowledge_base(session: Session) -> dict:
+    rows = session.execute(select(KnowledgeBaseEntry)).scalars().all()
+    return {row.key: row.value for row in rows}
+
+
+def get_active_style(session: Session) -> StyleVariant | None:
+    return session.execute(
+        select(StyleVariant)
+        .where(StyleVariant.status == "active")
+        .order_by(StyleVariant.posts_n.asc().nullsfirst(), StyleVariant.id.asc())
+        .limit(1)
+    ).scalar_one_or_none()
+
+
+def increment_style_variant_posts_n(session: Session, style_variant_id: int) -> None:
+    variant = session.get(StyleVariant, style_variant_id)
+    variant.posts_n = (variant.posts_n or 0) + 1
+
+
+def get_active_playbook_rules(session: Session) -> list[PlaybookRule]:
+    return list(session.execute(
+        select(PlaybookRule)
+        .where(PlaybookRule.status.in_(["testing", "confirmed"]))
+        .order_by(PlaybookRule.introduced_at.desc())
+    ).scalars().all())
+
+
+def get_recent_posts(session: Session, n: int = 30) -> list[Post]:
+    return list(session.execute(
+        select(Post).order_by(Post.created_at.desc()).limit(n)
+    ).scalars().all())
+
+
+def get_top_performers(session: Session, n: int = 5) -> list[Post]:
+    return list(session.execute(
+        select(Post)
+        .where(Post.status == "published", Post.score.isnot(None))
+        .order_by(Post.score.desc())
+        .limit(n)
+    ).scalars().all())
+
+
+def get_swipe_examples(session: Session, n: int = 8, topic: str | None = None) -> list[SwipeFilePost]:
+    stmt = select(SwipeFilePost).order_by(SwipeFilePost.collected_at.desc()).limit(n)
+    if topic:
+        stmt = stmt.where(SwipeFilePost.topic == topic)
+    return list(session.execute(stmt).scalars().all())
+
+
+def insert_post(session: Session, **fields) -> Post:
+    post = Post(**fields)
+    session.add(post)
+    session.flush()
+    return post
+
+
+def get_posts_due_for_publish(session: Session, now: datetime | None = None) -> list[Post]:
+    now = now or datetime.now(timezone.utc)
+    return list(session.execute(
+        select(Post)
+        .where(Post.status == "scheduled", Post.scheduled_at <= now)
+        .order_by(Post.scheduled_at.asc())
+    ).scalars().all())
