@@ -15,13 +15,12 @@ def test_search_keyword_happy_path(client, db_session, monkeypatch):
     monkeypatch.setattr("src.threads.read_client.time.sleep", lambda s: None)
 
     fake_driver = MagicMock()
-    fake_build_driver = MagicMock(return_value=fake_driver)
-    fake_login = MagicMock(return_value=True)
-    fake_scrape_keyword = MagicMock(return_value=[{"keyword": "n8n", "text": "post", "url": "https://threads.net/post/1"}])
-    with patch(
-        "src.threads.read_client._get_threads_app_modules",
-        return_value=(fake_build_driver, fake_login, fake_scrape_keyword),
-    ):
+    with patch("src.threads.read_client.build_driver", return_value=fake_driver), \
+         patch("src.threads.read_client.login", return_value=True), \
+         patch(
+             "src.threads.read_client.scrape_keyword",
+             return_value=[{"keyword": "n8n", "text": "post", "url": "https://threads.net/post/1"}],
+         ):
         results = client.search_keyword("n8n")
 
     assert results == [{"keyword": "n8n", "text": "post", "url": "https://threads.net/post/1"}]
@@ -33,12 +32,10 @@ def test_search_keyword_raises_auth_error_without_retry(client, monkeypatch):
     monkeypatch.setattr("src.threads.read_client.time.sleep", lambda s: None)
 
     fake_driver = MagicMock()
-    fake_build_driver = MagicMock(return_value=fake_driver)
     fake_login = MagicMock(return_value=False)
-    with patch(
-        "src.threads.read_client._get_threads_app_modules",
-        return_value=(fake_build_driver, fake_login, MagicMock()),
-    ):
+    with patch("src.threads.read_client.build_driver", return_value=fake_driver), \
+         patch("src.threads.read_client.login", fake_login), \
+         patch("src.threads.read_client.scrape_keyword"):
         with pytest.raises(AuthError):
             client.search_keyword("n8n")
 

@@ -54,14 +54,23 @@ Autonomous Threads-posting agent. See `SPEC.md` for the full design.
    python -m alembic upgrade head
    ```
 
-4. **`THREADS_APP_PATH`**
+4. **Browser-based Threads login (`src/threads/browser`)**
 
-   `ThreadsReadClient` (and the future `feed_miner` agent) shells out to a separate
-   `threads_app` project for browser-based Threads scraping. That project is **not**
-   vendored into this repo or the Docker image — set `THREADS_APP_PATH` in your
-   `.env` to a local checkout of it. This is only required when code that actually
-   calls `ThreadsReadClient.search_keyword()` runs; importing this codebase does not
-   require it.
+   `ThreadsReadClient` / `feed_miner` read the public feed via a headless-Chrome
+   Selenium login (`src/threads/browser`), fully vendored into this repo — no
+   external checkout required. Login is cookie-first: run
+   `python -m scripts.threads_setup_session` once, locally, on a machine with a
+   real display, to log in by hand and save a session to
+   `THREADS_COOKIES_PATH` (`data/threads_cookies.json` by default). Only if that
+   session is missing or expired does `login()` fall back to
+   `THREADS_USERNAME`/`THREADS_PASSWORD` from `.env`, driving the real login
+   form via Selenium.
+
+   The `worker` service mounts a `threads_session` volume at `/app/data` so the
+   cookie file survives `docker compose down`/`up` instead of forcing a fresh
+   login on every redeploy. If you ever need to seed that volume from a
+   session saved outside Docker, copy `data/threads_cookies.json` into it, e.g.:
+   `docker compose cp data/threads_cookies.json worker:/app/data/threads_cookies.json`.
 
 5. **Content generation (Block 3) setup**
 

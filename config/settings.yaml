@@ -1,5 +1,6 @@
 queue_depth: 5
 feed_view_daily_cap: 200
+max_post_age_days: 3
 budget:
   soft_stop_usd: 8.0
   hard_stop_usd: 10.0
@@ -14,6 +15,12 @@ search_groups:
       - "автоматизация бизнеса"
       - "n8n"
       - "ИИ агент для бизнеса"
+      - "внедрение ИИ в бизнес"
+      - "AI агент для бизнеса"
+      - "автоматизировать процессы"
+      - "нужна автоматизация"
+      - "whatsapp"
+      - "ищу ИИ специалиста"
 ab_test_models: false
 publish_times:
   - "09:00"

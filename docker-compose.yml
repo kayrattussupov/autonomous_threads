@@ -15,6 +15,8 @@ services:
     build: .
     command: sh -c "python -m alembic upgrade head && python -m src.scheduler"
     env_file: .env
+    volumes:
+      - threads_session:/app/data
     depends_on:
       - postgres
     restart: unless-stopped
@@ -33,7 +35,6 @@ services:
     image: caddy:2
     ports:
       - "443:443"
-      - "80:80"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile
       - caddy_data:/data
@@ -44,3 +45,4 @@ services:
 volumes:
   pgdata:
   caddy_data:
+  threads_session:

@@ -1,26 +1,12 @@
-import os
 import random
-import sys
 import time
 
 from src.config import load_settings
 from src.db.engine import session_scope
 from src.db.repo import get_daily_limit, increment_daily_limit
-
-_threads_app_modules = None
-
-
-def _get_threads_app_modules():
-    global _threads_app_modules
-    if _threads_app_modules is None:
-        threads_app_path = os.environ["THREADS_APP_PATH"]
-        if threads_app_path not in sys.path:
-            sys.path.insert(0, threads_app_path)
-        from search.driver import build_driver
-        from search.auth import login
-        from search.scraper import scrape_keyword
-        _threads_app_modules = (build_driver, login, scrape_keyword)
-    return _threads_app_modules
+from src.threads.browser.auth import login
+from src.threads.browser.driver import build_driver
+from src.threads.browser.scraper import scrape_keyword
 
 
 class AuthError(Exception):
@@ -50,7 +36,6 @@ class ThreadsReadClient:
     def search_keyword(self, keyword: str, scroll_times: int = 5) -> list[dict]:
         self._check_and_increment_cap(scroll_times)
 
-        build_driver, login, scrape_keyword = _get_threads_app_modules()
         driver = build_driver(headless=True)
         try:
             self._jitter()
