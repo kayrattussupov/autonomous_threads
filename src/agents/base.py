@@ -76,6 +76,12 @@ class ReActAgent(ABC):
                     tool = self.tools()[tool_name]
                     result = tool(**tool_args)
                     tool_ok = True
+                except BudgetExceeded:
+                    # Must propagate to the outer handler below, which finishes
+                    # the run with status="budget_stop" — do NOT record this as
+                    # an ordinary failed tool step, or the agent will just keep
+                    # retrying for its remaining steps against an exhausted budget.
+                    raise
                 except Exception as exc:  # noqa: BLE001 — recorded, not swallowed silently
                     result = str(exc)
                     tool_ok = False

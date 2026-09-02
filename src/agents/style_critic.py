@@ -2,6 +2,7 @@ import json
 
 from src.config import load_settings
 from src.llm.client import LLMClient
+from src.llm.json_extract import extract_json
 
 CRITIC_PROMPT_TEMPLATE = """\
 Ты — редактор, проверяющий пост перед публикацией в Threads.
@@ -55,7 +56,7 @@ def run_style_critic(
         step_no=step_no,
     )
     try:
-        llm_issues = json.loads(response.text).get("issues", [])
+        llm_issues = json.loads(extract_json(response.text)).get("issues", [])
     except (json.JSONDecodeError, AttributeError):
         llm_issues = [f"style_critic LLM вернул невалидный JSON: {response.text[:200]!r}"]
 

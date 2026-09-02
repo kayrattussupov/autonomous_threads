@@ -1,3 +1,4 @@
+import json
 from unittest.mock import MagicMock
 
 from src.agents.style_critic import run_style_critic
@@ -11,9 +12,23 @@ class _FakeLLMClient:
 
     def complete(self, role, messages, run_id=None, step_no=None):
         self.calls.append(role)
-        import json
         return LLMResponse(
             text=json.dumps({"issues": self._issues}),
+            tokens_in=50, tokens_out=10, cost_usd=0.0001,
+            model="glm-4.7-flash", finish_reason="stop",
+        )
+
+
+class _FencedLLMClient:
+    """Wraps the JSON response in a ```json fence, as real LLMs commonly do."""
+    def __init__(self, issues: list[str]):
+        self._issues = issues
+        self.calls = []
+
+    def complete(self, role, messages, run_id=None, step_no=None):
+        self.calls.append(role)
+        return LLMResponse(
+            text="```json\n" + json.dumps({"issues": self._issues}) + "\n```",
             tokens_in=50, tokens_out=10, cost_usd=0.0001,
             model="glm-4.7-flash", finish_reason="stop",
         )
@@ -104,6 +119,23 @@ def test_fails_on_exact_repeat_of_recent_post(monkeypatch):
 
     assert result["pass"] is False
     assert any("повтор" in issue for issue in result["issues"])
+
+
+def test_parses_markdown_fenced_llm_response(monkeypatch):
+    monkeypatch.setattr(
+        "src.agents.style_critic.load_settings",
+        lambda: {"post_length": {"min_chars": 200, "max_chars": 400, "hard_max_chars": 500}},
+    )
+    text = "х" * 250
+    llm_client = _FencedLLMClient(issues=["не соответствует геному"])
+
+    result = run_style_critic(
+        text=text, category="educational", source_url=None, genome="g",
+        recent_post_texts=[], llm_client=llm_client,
+    )
+
+    assert result["pass"] is False
+    assert result["issues"] == ["не соответствует геному"]
 
 
 def test_combines_deterministic_and_llm_issues(monkeypatch):

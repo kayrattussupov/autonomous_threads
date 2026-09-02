@@ -26,7 +26,7 @@ def publish_scheduled_posts(trigger: str = "cron", write_client: ThreadsWriteCli
         with session_scope() as session:
             due_post_ids = [p.id for p in get_posts_due_for_publish(session)]
 
-        for idx, post_id in enumerate(due_post_ids):
+        for post_id in due_post_ids:
             step_no += 1
             with session_scope() as session:
                 from src.db.models import Post
@@ -52,16 +52,12 @@ def publish_scheduled_posts(trigger: str = "cron", write_client: ThreadsWriteCli
                     post.status = "failed"
                 failed += 1
 
-                # Mark all remaining posts as failed to avoid leaving them "scheduled" forever
-                remaining_post_ids = due_post_ids[idx + 1:]
-                if remaining_post_ids:
-                    with session_scope() as session:
-                        from src.db.models import Post
-                        for remaining_post_id in remaining_post_ids:
-                            remaining_post = session.get(Post, remaining_post_id)
-                            remaining_post.status = "failed"
-                    failed += len(remaining_post_ids)
-
+                # Remaining due posts were never attempted — leave them
+                # "scheduled" (not "failed") so the next publisher_every_10_min
+                # run retries them automatically. PublishingLimitExceeded is a
+                # temporary daily-quota condition, not a permanent failure, and
+                # Block 4's dashboard reads `status` as real signal — a post
+                # that was never even attempted is not a "failed" post.
                 send_telegram_alert(f"content_publisher: остановлен — {exc}")
                 with session_scope() as session:
                     add_agent_step(session, run_id=run_id, step_no=step_no, tool_name="publish_text_post", tool_args={"post_id": post_id}, tool_result=tool_result, tool_ok=tool_ok)
@@ -80,6 +76,7 @@ def publish_scheduled_posts(trigger: str = "cron", write_client: ThreadsWriteCli
     except Exception as exc:  # noqa: BLE001
         status = "failed"
         error = str(exc)
+        send_telegram_alert(f"content_publisher: остановлен (неожиданная ошибка): {exc}")
 
     with session_scope() as session:
         finish_agent_run(session, run_id, status=status, steps_count=step_no, error=error, output_ref=f"published={published} failed={failed}")

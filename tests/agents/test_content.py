@@ -96,6 +96,36 @@ def test_content_agent_allows_one_regeneration_then_needs_review(db_session, mon
     assert db_session.query(Post).filter_by(text="первая попытка").count() == 0  # rejected draft never persisted
 
 
+def test_content_agent_parses_markdown_fenced_json_tool_call(db_session, monkeypatch):
+    """Real LLMs routinely wrap JSON responses in ```json ... ``` fences.
+    decide_next_action must tolerate this rather than treating it as invalid
+    JSON (src.llm.json_extract.extract_json handles the stripping)."""
+    _seed_active_style(db_session)
+    monkeypatch.setattr(
+        "src.agents.content.load_settings",
+        lambda: {
+            "post_length": {"min_chars": 5, "max_chars": 400, "hard_max_chars": 500},
+            "publish_times": ["09:00"],
+            "publish_timezone": "Asia/Almaty",
+            "agent_limits": {"max_steps": 8, "max_tokens": 40000, "max_seconds": 120},
+        },
+    )
+    monkeypatch.setattr("src.agents.content.run_style_critic", lambda **kwargs: {
+        "pass": True, "issues": [], "tokens_in": 1, "tokens_out": 1, "cost_usd": 0.0,
+    })
+
+    fenced_text = "поддержка markdown-ограды"
+    fenced = "```json\n" + _tool_call_json("save_draft", {"text": fenced_text, "category": "educational"}) + "\n```"
+    script = [fenced]
+    agent = ContentAgent(llm_client=_ScriptedLLMClient(script))
+
+    run = agent.run(trigger="manual")
+
+    assert run.status == "ok"
+    post = db_session.query(Post).filter_by(text=fenced_text).one()
+    assert post.status == "scheduled"
+
+
 def test_content_agent_invalid_json_response_recorded_as_failed_step_and_retried(db_session, monkeypatch):
     _seed_active_style(db_session)
     monkeypatch.setattr(
@@ -171,6 +201,9 @@ def test_content_agent_threads_source_url_through_to_persisted_post(db_session, 
             "agent_limits": {"max_steps": 8, "max_tokens": 40000, "max_seconds": 120},
         },
     )
+    # verify_source() now actually runs (finding #2's fix) — mock it so this
+    # test doesn't depend on a real network call to example.com.
+    monkeypatch.setattr("src.agents.content.verify_source", lambda url: True)
     captured_kwargs = {}
 
     def _fake_run_style_critic(**kwargs):
@@ -195,3 +228,53 @@ def test_content_agent_threads_source_url_through_to_persisted_post(db_session, 
     assert post.status == "scheduled"
     assert post.source_url == source_url
     assert post.style_variant_id == variant.id
+
+
+def test_content_agent_drops_unverified_source_url_for_news(db_session, monkeypatch):
+    """A category='news' draft whose source_url fails verify_source() must be
+    treated the same as a missing source_url: not persisted, and style_critic's
+    news-needs-source_url check should fail on it (no free pass for a
+    hallucinated/dead URL string)."""
+    _seed_active_style(db_session)
+    monkeypatch.setattr(
+        "src.agents.content.load_settings",
+        lambda: {
+            "post_length": {"min_chars": 5, "max_chars": 400, "hard_max_chars": 500},
+            "publish_times": ["09:00"],
+            "publish_timezone": "Asia/Almaty",
+            "agent_limits": {"max_steps": 8, "max_tokens": 40000, "max_seconds": 120},
+        },
+    )
+    monkeypatch.setattr("src.agents.content.verify_source", lambda url: False)
+    alert_mock = MagicMock(return_value=True)
+    monkeypatch.setattr("src.agents.content.send_telegram_alert", alert_mock)
+
+    calls = []
+
+    def _fake_run_style_critic(**kwargs):
+        calls.append(kwargs)
+        # Mirror the real style_critic's news-needs-source_url rule (only
+        # applies to category='news').
+        needs_url = kwargs["category"] == "news" and not kwargs["source_url"]
+        issues = ["category='news' требует проверенный source_url"] if needs_url else []
+        return {"pass": len(issues) == 0, "issues": issues, "tokens_in": 1, "tokens_out": 1, "cost_usd": 0.0}
+
+    monkeypatch.setattr("src.agents.content.run_style_critic", _fake_run_style_critic)
+
+    news_text = "Новость с поддельной ссылкой на источник."
+    fake_source_url = "https://fake-not-real.example.com/news/x"
+    good_text = "Другой пост без ссылки, обычная категория."
+    script = [
+        _tool_call_json("save_draft", {"text": news_text, "category": "news", "source_url": fake_source_url}),
+        _tool_call_json("save_draft", {"text": good_text, "category": "educational"}),
+    ]
+    agent = ContentAgent(llm_client=_ScriptedLLMClient(script))
+
+    run = agent.run(trigger="manual")
+
+    assert run.status == "ok"
+    # verify_source() returned False, so source_url must have been nulled out
+    # before reaching run_style_critic — same as if it were never supplied.
+    assert calls[0]["source_url"] is None
+    assert db_session.query(Post).filter_by(text=news_text).count() == 0  # never persisted with a fake url
+    assert db_session.query(Post).filter_by(text=good_text).one().status == "scheduled"

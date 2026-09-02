@@ -70,13 +70,18 @@ def test_publish_scheduled_posts_stops_on_publishing_limit_exceeded(db_session, 
 
     result = publish_scheduled_posts(trigger="manual", write_client=write_client)
 
-    assert result["published"] == 0
-    # Both posts attempted-and-failed, OR the first failure stops the batch —
-    # either is acceptable as long as no post is silently left "scheduled"
-    # forever and at least one alert fired.
-    remaining_scheduled = db_session.query(Post).filter_by(status="scheduled").count()
-    assert remaining_scheduled == 0
-    alert_mock.assert_called()
+    # Only the post that actually raised PublishingLimitExceeded is "failed".
+    # PublishingLimitExceeded is a temporary daily-quota condition, not a
+    # permanent failure — the other due post was never attempted and must
+    # stay "scheduled" so the next publisher_every_10_min run retries it
+    # (Block 4's dashboard reads `status` as real signal, so a never-attempted
+    # post must not be mislabeled "failed").
+    assert result == {"published": 0, "failed": 1}
+    failed_post = db_session.query(Post).filter_by(text="post 1").one()
+    assert failed_post.status == "failed"
+    untouched_post = db_session.query(Post).filter_by(text="post 2").one()
+    assert untouched_post.status == "scheduled"
+    alert_mock.assert_called_once()
 
 
 def test_publish_scheduled_posts_traces_to_agent_runs(db_session):
