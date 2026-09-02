@@ -1,9 +1,9 @@
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import func, literal_column, select
 from sqlalchemy.orm import Session
 
-from src.db.models import AgentRun, AgentStep, DailyLimit, DailySpend, LlmCall, PlaybookRule, Post, StyleVariant
+from src.db.models import AgentRun, AgentStep, DailyLimit, DailySpend, Lead, LlmCall, PlaybookRule, Post, Reply, StyleVariant
 
 
 class InvalidStateTransition(Exception):
@@ -197,3 +197,65 @@ def reject_playbook_rule(session: Session, rule_id: int) -> PlaybookRule:
     rule.status = "rejected"
     session.flush()
     return rule
+
+
+def get_funnel(session: Session, months: int = 6) -> list[dict]:
+    since = datetime.now(timezone.utc) - timedelta(days=31 * months)
+
+    def _key(dt: datetime) -> str:
+        return dt.strftime("%Y-%m")
+
+    months_map: dict[str, dict] = {}
+
+    def _bucket(month_key: str) -> dict:
+        return months_map.setdefault(
+            month_key, {"posts": 0, "views": 0, "replies": 0, "conversations": 0, "leads": 0}
+        )
+
+    month_expr = literal_column("date_trunc('month', posts.posted_at)")
+    posts_rows = session.execute(
+        select(
+            month_expr.label("month"),
+            func.count(Post.id).label("posts"),
+            func.coalesce(func.sum(Post.views), 0).label("views"),
+            func.coalesce(func.sum(Post.replies_count), 0).label("replies"),
+        )
+        .where(Post.posted_at.is_not(None), Post.posted_at >= since)
+        .group_by(month_expr)
+    ).all()
+    for row in posts_rows:
+        bucket = _bucket(_key(row.month))
+        bucket["posts"] = row.posts
+        bucket["views"] = int(row.views)
+        bucket["replies"] = int(row.replies)
+
+    month_expr_replies = literal_column("date_trunc('month', replies.received_at)")
+    conversations_rows = session.execute(
+        select(
+            month_expr_replies.label("month"),
+            func.count(Reply.id).label("conversations"),
+        )
+        .where(
+            Reply.kind.in_(["question", "objection"]),
+            Reply.responded_at.is_not(None),
+            Reply.received_at.is_not(None),
+            Reply.received_at >= since,
+        )
+        .group_by(month_expr_replies)
+    ).all()
+    for row in conversations_rows:
+        _bucket(_key(row.month))["conversations"] = row.conversations
+
+    month_expr_leads = literal_column("date_trunc('month', leads.created_at)")
+    leads_rows = session.execute(
+        select(
+            month_expr_leads.label("month"),
+            func.count(Lead.id).label("leads"),
+        )
+        .where(Lead.created_at >= since)
+        .group_by(month_expr_leads)
+    ).all()
+    for row in leads_rows:
+        _bucket(_key(row.month))["leads"] = row.leads
+
+    return [{"month": month, **data} for month, data in sorted(months_map.items())]
