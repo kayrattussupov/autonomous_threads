@@ -3,7 +3,7 @@ from datetime import date, datetime, timezone
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from src.db.models import AgentRun, AgentStep, DailyLimit, DailySpend, LlmCall
+from src.db.models import AgentRun, AgentStep, DailyLimit, DailySpend, LlmCall, Post
 
 
 class InvalidStateTransition(Exception):
@@ -80,3 +80,51 @@ def finish_agent_run(session: Session, run_id: int, status: str, **fields) -> No
     run.finished_at = datetime.now(timezone.utc)
     for key, value in fields.items():
         setattr(run, key, value)
+
+
+def list_posts(
+    session: Session,
+    *,
+    category: str | None = None,
+    style_variant_id: int | None = None,
+    model_used: str | None = None,
+    status: str | None = None,
+    page: int = 1,
+    page_size: int = 25,
+) -> tuple[list[Post], int]:
+    stmt = select(Post)
+    if category is not None:
+        stmt = stmt.where(Post.category == category)
+    if style_variant_id is not None:
+        stmt = stmt.where(Post.style_variant_id == style_variant_id)
+    if model_used is not None:
+        stmt = stmt.where(Post.model_used == model_used)
+    if status is not None:
+        stmt = stmt.where(Post.status == status)
+
+    total = session.execute(select(func.count()).select_from(stmt.subquery())).scalar_one()
+    items = session.execute(
+        stmt.order_by(Post.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
+    ).scalars().all()
+    return list(items), total
+
+
+def median_post_score(
+    session: Session,
+    *,
+    category: str | None = None,
+    style_variant_id: int | None = None,
+    model_used: str | None = None,
+    status: str | None = None,
+) -> float | None:
+    stmt = select(func.percentile_cont(0.5).within_group(Post.score))
+    if category is not None:
+        stmt = stmt.where(Post.category == category)
+    if style_variant_id is not None:
+        stmt = stmt.where(Post.style_variant_id == style_variant_id)
+    if model_used is not None:
+        stmt = stmt.where(Post.model_used == model_used)
+    if status is not None:
+        stmt = stmt.where(Post.status == status)
+    result = session.execute(stmt).scalar_one_or_none()
+    return float(result) if result is not None else None
