@@ -128,3 +128,13 @@ def median_post_score(
         stmt = stmt.where(Post.status == status)
     result = session.execute(stmt).scalar_one_or_none()
     return float(result) if result is not None else None
+
+
+def list_agent_runs(session: Session, limit: int = 50) -> list[AgentRun]:
+    stmt = select(AgentRun).order_by(AgentRun.started_at.desc()).limit(limit)
+    return list(session.execute(stmt).scalars().all())
+
+
+def list_agent_steps(session: Session, run_id: int) -> list[AgentStep]:
+    stmt = select(AgentStep).where(AgentStep.run_id == run_id).order_by(AgentStep.step_no.asc())
+    return list(session.execute(stmt).scalars().all())

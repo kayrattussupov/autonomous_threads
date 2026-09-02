@@ -1,11 +1,12 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from src.api.routers import posts
+from src.api.routers import posts, runs
 from src.db.repo import InvalidStateTransition, RetirementBlocked
 
 app = FastAPI()
 app.include_router(posts.router)
+app.include_router(runs.router)
 
 
 @app.exception_handler(InvalidStateTransition)
