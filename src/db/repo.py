@@ -3,7 +3,7 @@ from datetime import date, datetime, timezone
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from src.db.models import AgentRun, AgentStep, DailyLimit, DailySpend, LlmCall, Post, StyleVariant
+from src.db.models import AgentRun, AgentStep, DailyLimit, DailySpend, LlmCall, PlaybookRule, Post, StyleVariant
 
 
 class InvalidStateTransition(Exception):
@@ -174,3 +174,26 @@ def reject_style_variant(session: Session, variant_id: int) -> StyleVariant:
     variant.status = "rejected"
     session.flush()
     return variant
+
+
+def list_playbook_rules(session: Session) -> list[PlaybookRule]:
+    stmt = select(PlaybookRule).order_by(PlaybookRule.introduced_at.desc())
+    return list(session.execute(stmt).scalars().all())
+
+
+def approve_playbook_rule(session: Session, rule_id: int) -> PlaybookRule:
+    rule = session.get(PlaybookRule, rule_id)
+    if rule is None or rule.status != "proposed":
+        raise InvalidStateTransition(f"playbook_rule {rule_id} is not in a pending 'proposed' state")
+    rule.status = "testing"
+    session.flush()
+    return rule
+
+
+def reject_playbook_rule(session: Session, rule_id: int) -> PlaybookRule:
+    rule = session.get(PlaybookRule, rule_id)
+    if rule is None or rule.status != "proposed":
+        raise InvalidStateTransition(f"playbook_rule {rule_id} is not in a pending 'proposed' state")
+    rule.status = "rejected"
+    session.flush()
+    return rule
