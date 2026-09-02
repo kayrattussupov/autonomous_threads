@@ -1,5 +1,7 @@
 from unittest.mock import MagicMock, patch
 
+import requests
+
 from src.tools.web_search import verify_source, web_search
 
 
@@ -53,5 +55,5 @@ def test_verify_source_false_on_empty_title():
 
 
 def test_verify_source_false_on_network_error():
-    with patch("src.tools.web_search.requests.get", side_effect=Exception("timeout")):
+    with patch("src.tools.web_search.requests.get", side_effect=requests.exceptions.ConnectionError("timeout")):
         assert verify_source("https://example.com/down") is False

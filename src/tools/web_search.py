@@ -40,7 +40,7 @@ def verify_source(url: str) -> bool:
     """SPEC.md §6.1: HTTP 200 + non-empty <title>."""
     try:
         resp = requests.get(url, timeout=10)
-    except Exception:
+    except requests.RequestException:
         return False
 
     if resp.status_code != 200:
