@@ -40,12 +40,20 @@ def publish_scheduled_posts(trigger: str = "cron", write_client: ThreadsWriteCli
                 text = post.text
                 style_variant = session.get(StyleVariant, post.style_variant_id) if post.style_variant_id is not None else None
 
-            if style_variant is not None and style_variant.name == PLACEHOLDER_STYLE_VARIANT_NAME and not _placeholder_genome_allowed():
+            is_placeholder = style_variant is not None and style_variant.name == PLACEHOLDER_STYLE_VARIANT_NAME
+            is_missing = style_variant is None
+            if (is_placeholder or is_missing) and not _placeholder_genome_allowed():
                 blocked += 1
-                tool_result = (
-                    "blocked: active style_variant is the placeholder (v1_placeholder) — "
-                    "replace its genome before real posting, or set ALLOW_PLACEHOLDER_GENOME=1 to override"
-                )
+                if is_missing:
+                    tool_result = (
+                        "blocked: no style_variant on record for this post — "
+                        "configure an active style_variant before real posting, or set ALLOW_PLACEHOLDER_GENOME=1 to override"
+                    )
+                else:
+                    tool_result = (
+                        "blocked: active style_variant is the placeholder (v1_placeholder) — "
+                        "replace its genome before real posting, or set ALLOW_PLACEHOLDER_GENOME=1 to override"
+                    )
                 with session_scope() as session:
                     add_agent_step(session, run_id=run_id, step_no=step_no, tool_name="publish_text_post", tool_args={"post_id": post_id}, tool_result=tool_result, tool_ok=False)
                 continue
