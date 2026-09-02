@@ -4,7 +4,7 @@ import pytest
 
 from src.agents.feed_miner import run_feed_miner
 from src.db.models import AgentRun, SwipeFilePost
-from src.llm.client import LLMResponse
+from src.llm.client import BudgetExceeded, LLMResponse
 from src.threads.read_client import AuthError, DailyViewCapExceeded
 
 
@@ -115,3 +115,25 @@ def test_run_feed_miner_stops_on_daily_cap_and_alerts(db_session, monkeypatch):
 
     assert result["status"] == "failed"
     alert_mock.assert_called_once()
+
+
+def test_run_feed_miner_finishes_run_on_budget_exceeded(db_session, monkeypatch):
+    monkeypatch.setattr(
+        "src.agents.feed_miner.load_settings",
+        lambda: {"search_groups": [{"name": "g1", "keywords": ["n8n"]}]},
+    )
+    read_client = _FakeReadClient({
+        "n8n": [{"keyword": "n8n", "text": "Пост 1", "url": "https://threads.net/post/aaa/"}]
+    })
+
+    class _BudgetBustingLLMClient:
+        def complete(self, role, messages, run_id=None, step_no=None):
+            raise BudgetExceeded("month-to-date spend exceeded hard stop")
+
+    result = run_feed_miner(trigger="manual", read_client=read_client, llm_client=_BudgetBustingLLMClient())
+
+    assert result["status"] == "budget_stop"
+
+    run = db_session.query(AgentRun).filter_by(agent="feed_miner").one()
+    assert run.status == "budget_stop"
+    assert run.finished_at is not None

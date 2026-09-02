@@ -11,7 +11,7 @@ from src.db.repo import (
     start_agent_run,
     swipe_file_post_exists,
 )
-from src.llm.client import LLMClient
+from src.llm.client import BudgetExceeded, LLMClient
 from src.threads.read_client import AuthError, DailyViewCapExceeded, ThreadsReadClient
 
 _POST_URL_ID_RE = re.compile(r"/post/([A-Za-z0-9_-]+)")
@@ -69,52 +69,59 @@ def run_feed_miner(
 
     search_groups = load_settings()["search_groups"]
 
-    for group in search_groups:
-        if status == "failed":
-            break
-        for keyword in group["keywords"]:
-            step_no += 1
-            tool_ok = True
-            tool_result = None
-            try:
-                posts = read_client.search_keyword(keyword)
-                for post in posts:
-                    post_id = _derive_post_id(post["url"], post["text"])
-                    with session_scope() as session:
-                        already_seen = swipe_file_post_exists(session, post_id)
-                    if already_seen:
-                        skipped_dupes += 1
-                        continue
-                    topic = _classify_topic(llm_client, post["text"], run_id, step_no)
-                    with session_scope() as session:
-                        insert_swipe_file_post(
-                            session,
-                            threads_post_id=post_id,
-                            text=post["text"],
-                            topic=topic,
-                        )
-                    collected += 1
-                tool_result = {"keyword": keyword, "posts_found": len(posts)}
-            except (AuthError, DailyViewCapExceeded) as exc:
-                tool_ok = False
-                tool_result = str(exc)
-                status = "failed"
-                error = str(exc)
-                send_telegram_alert(f"feed_miner stopped: {exc}")
-
-            with session_scope() as session:
-                add_agent_step(
-                    session,
-                    run_id=run_id,
-                    step_no=step_no,
-                    tool_name="search_keyword",
-                    tool_args={"keyword": keyword},
-                    tool_result=tool_result,
-                    tool_ok=tool_ok,
-                )
-
+    try:
+        for group in search_groups:
             if status == "failed":
                 break
+            for keyword in group["keywords"]:
+                step_no += 1
+                tool_ok = True
+                tool_result = None
+                try:
+                    posts = read_client.search_keyword(keyword)
+                    for post in posts:
+                        post_id = _derive_post_id(post["url"], post["text"])
+                        with session_scope() as session:
+                            already_seen = swipe_file_post_exists(session, post_id)
+                        if already_seen:
+                            skipped_dupes += 1
+                            continue
+                        topic = _classify_topic(llm_client, post["text"], run_id, step_no)
+                        with session_scope() as session:
+                            insert_swipe_file_post(
+                                session,
+                                threads_post_id=post_id,
+                                text=post["text"],
+                                topic=topic,
+                            )
+                        collected += 1
+                    tool_result = {"keyword": keyword, "posts_found": len(posts)}
+                except (AuthError, DailyViewCapExceeded) as exc:
+                    tool_ok = False
+                    tool_result = str(exc)
+                    status = "failed"
+                    error = str(exc)
+                    send_telegram_alert(f"feed_miner stopped: {exc}")
+
+                with session_scope() as session:
+                    add_agent_step(
+                        session,
+                        run_id=run_id,
+                        step_no=step_no,
+                        tool_name="search_keyword",
+                        tool_args={"keyword": keyword},
+                        tool_result=tool_result,
+                        tool_ok=tool_ok,
+                    )
+
+                if status == "failed":
+                    break
+    except BudgetExceeded as exc:
+        status = "budget_stop"
+        error = str(exc)
+    except Exception as exc:  # noqa: BLE001 — recorded, not swallowed silently
+        status = "failed"
+        error = str(exc)
 
     with session_scope() as session:
         finish_agent_run(
