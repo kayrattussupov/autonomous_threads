@@ -150,3 +150,9 @@ def get_posts_due_for_publish(session: Session, now: datetime | None = None) -> 
         .where(Post.status == "scheduled", Post.scheduled_at <= now)
         .order_by(Post.scheduled_at.asc())
     ).scalars().all())
+
+
+def count_scheduled_posts(session: Session) -> int:
+    return session.execute(
+        select(func.count()).select_from(Post).where(Post.status == "scheduled")
+    ).scalar_one()

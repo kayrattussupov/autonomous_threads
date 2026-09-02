@@ -7,19 +7,15 @@ from src.agents.feed_miner import run_feed_miner
 from src.agents.publisher import publish_scheduled_posts
 from src.config import load_settings
 from src.db.engine import session_scope
+from src.db.repo import count_scheduled_posts
 
 TIMEZONE = "Asia/Almaty"
 
 
 def run_content_agent_if_queue_low():
-    from sqlalchemy import func, select
-    from src.db.models import Post
-
     queue_depth = load_settings()["queue_depth"]
     with session_scope() as session:
-        scheduled_count = session.execute(
-            select(func.count()).select_from(Post).where(Post.status == "scheduled")
-        ).scalar_one()
+        scheduled_count = count_scheduled_posts(session)
 
     if scheduled_count < queue_depth:
         ContentAgent().run(trigger="queue_low")
