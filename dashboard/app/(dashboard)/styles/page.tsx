@@ -1,19 +1,30 @@
+import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { approveStyle, getStyles, rejectStyle, type StyleVariant } from "@/lib/api-client";
+import { ApiError, approveStyle, getStyles, rejectStyle, type StyleVariant } from "@/lib/api-client";
 
 export const dynamic = "force-dynamic";
 
 async function approveAction(formData: FormData) {
   "use server";
   const id = Number(formData.get("id"));
-  await approveStyle(id);
+  try {
+    await approveStyle(id);
+  } catch (e) {
+    const message = e instanceof ApiError ? e.message : "Не удалось выполнить действие";
+    redirect(`/styles?error=${encodeURIComponent(message)}`);
+  }
   revalidatePath("/styles");
 }
 
 async function rejectAction(formData: FormData) {
   "use server";
   const id = Number(formData.get("id"));
-  await rejectStyle(id);
+  try {
+    await rejectStyle(id);
+  } catch (e) {
+    const message = e instanceof ApiError ? e.message : "Не удалось выполнить действие";
+    redirect(`/styles?error=${encodeURIComponent(message)}`);
+  }
   revalidatePath("/styles");
 }
 
@@ -44,12 +55,20 @@ function VariantRow({ variant }: { variant: StyleVariant }) {
   );
 }
 
-export default async function StylesPage() {
+export default async function StylesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ error?: string }>;
+}) {
+  const params = await searchParams;
   const variants = await getStyles();
 
   return (
     <main>
       <h1>Стили</h1>
+      {params.error && (
+        <p style={{ color: "crimson", padding: 8, border: "1px solid crimson" }}>{params.error}</p>
+      )}
       <table>
         <thead>
           <tr>

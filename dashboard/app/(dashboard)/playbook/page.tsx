@@ -1,19 +1,36 @@
+import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { approvePlaybookRule, getPlaybook, rejectPlaybookRule, type PlaybookRule } from "@/lib/api-client";
+import {
+  ApiError,
+  approvePlaybookRule,
+  getPlaybook,
+  rejectPlaybookRule,
+  type PlaybookRule,
+} from "@/lib/api-client";
 
 export const dynamic = "force-dynamic";
 
 async function approveAction(formData: FormData) {
   "use server";
   const id = Number(formData.get("id"));
-  await approvePlaybookRule(id);
+  try {
+    await approvePlaybookRule(id);
+  } catch (e) {
+    const message = e instanceof ApiError ? e.message : "Не удалось выполнить действие";
+    redirect(`/playbook?error=${encodeURIComponent(message)}`);
+  }
   revalidatePath("/playbook");
 }
 
 async function rejectAction(formData: FormData) {
   "use server";
   const id = Number(formData.get("id"));
-  await rejectPlaybookRule(id);
+  try {
+    await rejectPlaybookRule(id);
+  } catch (e) {
+    const message = e instanceof ApiError ? e.message : "Не удалось выполнить действие";
+    redirect(`/playbook?error=${encodeURIComponent(message)}`);
+  }
   revalidatePath("/playbook");
 }
 
@@ -45,12 +62,20 @@ function RuleRow({ rule }: { rule: PlaybookRule }) {
   );
 }
 
-export default async function PlaybookPage() {
+export default async function PlaybookPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ error?: string }>;
+}) {
+  const params = await searchParams;
   const rules = await getPlaybook();
 
   return (
     <main>
       <h1>Playbook</h1>
+      {params.error && (
+        <p style={{ color: "crimson", padding: 8, border: "1px solid crimson" }}>{params.error}</p>
+      )}
       <table>
         <thead>
           <tr>

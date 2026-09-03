@@ -10,7 +10,7 @@ export default async function LoginPage({
       <h1>Threads Agent Dashboard</h1>
       <form method="POST" action="/api/login">
         <input type="hidden" name="next" value={params.next ?? "/"} />
-        <label htmlFor="password">Password</label>
+        <label htmlFor="password">Пароль</label>
         <input
           id="password"
           name="password"
@@ -18,9 +18,9 @@ export default async function LoginPage({
           autoFocus
           style={{ display: "block", width: "100%", marginTop: 8, marginBottom: 12 }}
         />
-        <button type="submit">Sign in</button>
+        <button type="submit">Войти</button>
       </form>
-      {params.error && <p style={{ color: "crimson" }}>Wrong password.</p>}
+      {params.error && <p style={{ color: "crimson" }}>Неверный пароль.</p>}
     </main>
   );
 }
