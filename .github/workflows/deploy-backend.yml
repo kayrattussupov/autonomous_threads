@@ -51,6 +51,7 @@ jobs:
           username: ${{ secrets.EC2_SSH_USER }}
           key_path: ${{ runner.temp }}/deploy_key
           script: |
+            set -e
             cd /opt/autonomous_threads
             set -a; source .env; set +a
             aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "${ECR_REPOSITORY%%/*}"
