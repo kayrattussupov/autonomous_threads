@@ -61,3 +61,25 @@ def test_raises_threads_api_error_on_persistent_failure(client, monkeypatch):
         mock_post.return_value = MagicMock(status_code=500, json=lambda: {"error": "server error"})
         with pytest.raises(ThreadsAPIError):
             client.create_container("Пост")
+
+
+def test_get_replies_returns_data_list(client):
+    with patch("src.threads.write_client.requests.get") as mock_get:
+        mock_get.return_value = MagicMock(
+            status_code=200,
+            json=lambda: {"data": [
+                {"id": "r1", "text": "Как это работает?", "username": "u1", "timestamp": "2026-09-01T10:00:00+0000"},
+            ]},
+        )
+        replies = client.get_replies("media-1")
+
+    assert replies == [{"id": "r1", "text": "Как это работает?", "username": "u1", "timestamp": "2026-09-01T10:00:00+0000"}]
+    args, kwargs = mock_get.call_args
+    assert args[0] == "https://graph.threads.net/v1.0/media-1/replies"
+    assert kwargs["params"]["fields"] == "id,text,username,timestamp,permalink"
+
+
+def test_get_replies_returns_empty_list_when_no_data_key(client):
+    with patch("src.threads.write_client.requests.get") as mock_get:
+        mock_get.return_value = MagicMock(status_code=200, json=lambda: {})
+        assert client.get_replies("media-1") == []
