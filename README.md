@@ -135,3 +135,32 @@ curl -H "Authorization: Bearer $API_BEARER_TOKEN" https://localhost:8443/posts
 
 See `docs/superpowers/specs/2026-09-01-block-4-dashboard-design.md` for the full
 endpoint list and the frontend that consumes them.
+
+## Deployment
+
+The backend (`postgres`, `worker`, `api`, `caddy`) runs on a single AWS EC2
+instance via Docker Compose; the dashboard frontend (`dashboard/`) deploys to
+Vercel.
+
+- **`docker-compose.yml`** (this repo, used locally) builds the app image from
+  the local `Dockerfile` via `build: .`.
+- **`docker-compose.prod.yml`** is the server-only counterpart: `worker`/`api`
+  use `image: ${ECR_REPOSITORY}:${IMAGE_TAG:-latest}` instead of `build: .`.
+  It is not built locally — GitHub Actions builds the image, pushes it to
+  Amazon ECR, and the server only ever runs `docker compose -f
+  docker-compose.prod.yml pull && ... up -d` against it.
+- Pushing to `main` triggers `.github/workflows/deploy-backend.yml`, which
+  builds the image, pushes it to ECR, then deploys over SSH.
+  `.github/workflows/ci.yml` runs the pytest suite (with a Postgres service
+  container) on every PR and push. `.github/workflows/ci-frontend.yml`
+  typechecks and builds `dashboard/` on PRs that touch it; the actual
+  frontend deploy is handled by Vercel's own GitHub integration, not Actions.
+- The server's `.env` (all real secrets from `.env.example`, plus
+  `ECR_REPOSITORY`) is created once by hand on the EC2 instance and is never
+  written by CI. GitHub Secrets hold only deploy mechanics: the AWS OIDC role
+  ARN, `AWS_REGION`, `ECR_REPOSITORY`, `EC2_HOST`, `EC2_SSH_USER`, and
+  `EC2_SSH_KEY`.
+- `Caddyfile` currently uses `tls internal { on_demand }` (self-signed, for
+  local/dev use). Once a real domain points at the server's IP, change the
+  `:443` block to that domain so Caddy requests a real Let's Encrypt
+  certificate.

@@ -1,0 +1,35 @@
+name: CI (frontend)
+
+on:
+  pull_request:
+    paths:
+      - "dashboard/**"
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dashboard
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: dashboard/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+        env:
+          API_BASE_URL: "https://example.invalid"
+          API_BEARER_TOKEN: "ci-placeholder"
+          DASHBOARD_PASSWORD: "ci-placeholder"
