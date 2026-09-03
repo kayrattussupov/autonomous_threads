@@ -12,9 +12,14 @@ export function RunRow({ run }: { run: AgentRun }) {
   async function toggle() {
     if (!expanded && steps === null) {
       setLoading(true);
-      const result = await fetchStepsAction(run.id);
-      setSteps(result);
-      setLoading(false);
+      try {
+        const result = await fetchStepsAction(run.id);
+        setSteps(result);
+      } catch {
+        setSteps([]);
+      } finally {
+        setLoading(false);
+      }
     }
     setExpanded((value) => !value);
   }
@@ -28,7 +33,7 @@ export function RunRow({ run }: { run: AgentRun }) {
         <td>{run.status}</td>
         <td>{run.steps_count ?? 0}</td>
         <td>{(run.tokens_in ?? 0) + (run.tokens_out ?? 0)}</td>
-        <td>{run.cost_usd ?? 0}</td>
+        <td>{(run.cost_usd ?? 0).toFixed(4)}</td>
         <td>{expanded ? "▲" : "▼"}</td>
       </tr>
       {expanded && (

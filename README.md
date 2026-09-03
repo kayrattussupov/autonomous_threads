@@ -127,10 +127,11 @@ reachable through Caddy at `https://<host>/posts`, `/runs`, `/runs/{id}/steps`,
 `/styles`, `/playbook`, `/funnel`, `/spend`. Every route except `/health` requires
 `Authorization: Bearer <API_BEARER_TOKEN>` (the same value as your `.env`).
 
-Example:
+Example (`-k`/`--insecure` is required locally because the dev Caddyfile uses a
+self-signed certificate that curl won't trust by default):
 
 ```
-curl -H "Authorization: Bearer $API_BEARER_TOKEN" https://localhost:8443/posts
+curl -k -H "Authorization: Bearer $API_BEARER_TOKEN" https://localhost:8443/posts
 ```
 
 See `docs/superpowers/specs/2026-09-01-block-4-dashboard-design.md` for the full
@@ -153,15 +154,46 @@ npm run dev
 
 Open `http://localhost:3000`, log in with the `DASHBOARD_PASSWORD` you set.
 
+> **Note:** the local Caddyfile serves `https://localhost:8443` with a self-signed
+> certificate (`tls internal { on_demand }`). Node's `fetch()` (used by
+> `dashboard/lib/api-client.ts`) rejects self-signed certs with
+> `SELF_SIGNED_CERT_IN_CHAIN` and has no per-request CA override, so pointing
+> `API_BASE_URL` straight at `https://localhost:8443` will make every dashboard
+> page error out. Two ways around this:
+>
+> - **Preferred:** skip Caddy locally and point `API_BASE_URL` directly at the API
+>   service — e.g. expose the `api` container's port directly (`http://localhost:8000`
+>   if you've mapped it in a `docker-compose.override.yml`), or run
+>   `uvicorn src.api.main:app --host 0.0.0.0 --port 8010` locally outside Docker
+>   against your dev Postgres.
+> - **If you specifically need to test through Caddy locally:** set
+>   `NODE_TLS_REJECT_UNAUTHORIZED=0` in the environment running `npm run dev`. This
+>   disables TLS certificate verification for the whole Node process — it is fine
+>   for local-only testing but **must never be used in production or with any
+>   real/deployed API endpoint**.
+
 **Deploying to Vercel:**
 
 1. Import this repository into a new Vercel project.
 2. In the project's settings, set **Root Directory** to `dashboard`.
-3. Add three environment variables in the Vercel project settings: `API_BASE_URL`
-   (your production Caddy endpoint, reachable from the internet), `API_BEARER_TOKEN`
-   (matching the production server's `.env`), and `DASHBOARD_PASSWORD` (a password
-   only you know — this is the only thing standing between the public internet and
-   your dashboard, since Vercel deployment URLs are public by default).
+3. Before pointing `API_BASE_URL` at your production Caddy endpoint, make sure the
+   production `Caddyfile` uses a real, resolvable hostname instead of the local-dev
+   `:443 { tls internal { on_demand } }` block — Caddy needs a real domain to
+   provision a proper ACME certificate (e.g. via Let's Encrypt), since Vercel's
+   `fetch()` will reject a self-signed certificate the same way Node does locally.
+   For example:
+   ```
+   your-real-domain.example.com {
+       reverse_proxy api:8000
+   }
+   ```
+   Then add three environment variables in the Vercel project settings: `API_BASE_URL`
+   (your production Caddy endpoint, reachable from the internet, e.g.
+   `https://your-real-domain.example.com`), `API_BEARER_TOKEN` (matching the
+   production server's `.env`), and `DASHBOARD_PASSWORD` (a long, random password —
+   generate one with `openssl rand -base64 24` — since `/api/login` has no rate
+   limiting and this password is the only thing standing between the public internet
+   and your dashboard, as Vercel deployment URLs are public by default).
 4. Deploy. The five screens are reachable once you log in with `DASHBOARD_PASSWORD`.
 
 ## Deployment

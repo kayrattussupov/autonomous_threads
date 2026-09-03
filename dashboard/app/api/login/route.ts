@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 function safeNext(next: FormDataEntryValue | null, requestUrl: string): string {
-  if (typeof next !== "string") return "/";
+  if (typeof next !== "string" || next === "") return "/";
   let candidate: URL;
   try {
     candidate = new URL(next, requestUrl);

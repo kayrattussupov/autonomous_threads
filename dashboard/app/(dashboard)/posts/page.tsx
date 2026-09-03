@@ -13,7 +13,8 @@ export default async function PostsPage({
   }>;
 }) {
   const params = await searchParams;
-  const page = Number(params.page ?? "1");
+  const pageParam = Number(params.page ?? "1");
+  const page = Number.isInteger(pageParam) && pageParam >= 1 ? pageParam : 1;
 
   const data = await getPosts({
     category: params.category,
