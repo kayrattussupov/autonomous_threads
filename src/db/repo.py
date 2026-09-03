@@ -363,3 +363,31 @@ def count_scheduled_posts(session: Session) -> int:
     return session.execute(
         select(func.count()).select_from(Post).where(Post.status == "scheduled")
     ).scalar_one()
+
+
+def reply_exists(session: Session, threads_reply_id: str) -> bool:
+    return session.execute(
+        select(Reply.id).where(Reply.threads_reply_id == threads_reply_id)
+    ).scalar_one_or_none() is not None
+
+
+def insert_reply(session: Session, **fields) -> Reply:
+    reply = Reply(**fields)
+    session.add(reply)
+    session.flush()
+    return reply
+
+
+def insert_lead(session: Session, **fields) -> Lead:
+    lead = Lead(**fields)
+    session.add(lead)
+    session.flush()
+    return lead
+
+
+def get_posts_for_reply_triage(session: Session, since: datetime) -> list[Post]:
+    return list(session.execute(
+        select(Post)
+        .where(Post.status == "published", Post.threads_media_id.is_not(None), Post.posted_at >= since)
+        .order_by(Post.posted_at.desc())
+    ).scalars().all())
