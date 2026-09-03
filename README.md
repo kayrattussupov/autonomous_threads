@@ -126,3 +126,31 @@ curl -H "Authorization: Bearer $API_BEARER_TOKEN" https://localhost:8443/posts
 
 See `docs/superpowers/specs/2026-09-01-block-4-dashboard-design.md` for the full
 endpoint list and the frontend that consumes them.
+
+## Dashboard (frontend)
+
+`dashboard/` is a separate Next.js 15 project, deployed independently to Vercel.
+
+**Local development:**
+
+```
+cd dashboard
+cp .env.example .env.local
+# fill in API_BASE_URL (your local Caddy endpoint), API_BEARER_TOKEN (must match
+# the root .env's API_BEARER_TOKEN), and DASHBOARD_PASSWORD (any value you choose)
+npm install
+npm run dev
+```
+
+Open `http://localhost:3000`, log in with the `DASHBOARD_PASSWORD` you set.
+
+**Deploying to Vercel:**
+
+1. Import this repository into a new Vercel project.
+2. In the project's settings, set **Root Directory** to `dashboard`.
+3. Add three environment variables in the Vercel project settings: `API_BASE_URL`
+   (your production Caddy endpoint, reachable from the internet), `API_BEARER_TOKEN`
+   (matching the production server's `.env`), and `DASHBOARD_PASSWORD` (a password
+   only you know — this is the only thing standing between the public internet and
+   your dashboard, since Vercel deployment URLs are public by default).
+4. Deploy. The five screens are reachable once you log in with `DASHBOARD_PASSWORD`.
