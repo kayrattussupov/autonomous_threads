@@ -46,6 +46,7 @@ def test_get_posts_for_reply_triage_filters_by_status_media_id_and_recency(db_se
     insert_post(db_session, text="too old", category="educational", status="published", threads_media_id="m2", posted_at=now - timedelta(days=60))
     insert_post(db_session, text="draft", category="educational", status="draft", threads_media_id="m3", posted_at=now - timedelta(days=1))
     insert_post(db_session, text="no media id", category="educational", status="published", posted_at=now - timedelta(days=1))
+    insert_post(db_session, text="null posted_at", category="educational", status="published", threads_media_id="m4")
     db_session.commit()
 
     posts = get_posts_for_reply_triage(db_session, since)

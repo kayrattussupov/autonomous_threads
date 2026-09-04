@@ -57,9 +57,6 @@ def _published_post(db_session, **overrides):
         posted_at=_get_post_timestamp(),
     )
     fields.update(overrides)
-    # Ignore explicit None override for posted_at to ensure posts are discoverable
-    if "posted_at" in overrides and overrides["posted_at"] is None:
-        fields["posted_at"] = _get_post_timestamp()
     post = insert_post(db_session, **fields)
     db_session.commit()
     return post
@@ -75,7 +72,7 @@ def test_run_reply_triage_question_generates_draft_and_persists(db_session, monk
 
     result = run_reply_triage(trigger="manual", write_client=write_client, llm_client=llm_client)
 
-    assert result == {"processed": 1, "skipped_dupes": 0, "leads_found": 0, "status": "ok"}
+    assert result == {"processed": 1, "skipped_dupes": 0, "skipped_malformed": 0, "leads_found": 0, "status": "ok"}
     assert llm_client.calls == ["classifier", "commenter"]
 
     reply = db_session.query(Reply).filter_by(threads_reply_id="r1").one()
@@ -102,7 +99,7 @@ def test_run_reply_triage_skips_already_seen_replies(db_session, monkeypatch):
 
     result = run_reply_triage(trigger="manual", write_client=write_client, llm_client=llm_client)
 
-    assert result == {"processed": 0, "skipped_dupes": 1, "leads_found": 0, "status": "ok"}
+    assert result == {"processed": 0, "skipped_dupes": 1, "skipped_malformed": 0, "leads_found": 0, "status": "ok"}
     assert llm_client.calls == []  # never classify a dupe — don't waste budget
 
 
@@ -119,15 +116,15 @@ def test_run_reply_triage_skips_malformed_reply_without_aborting(db_session, mon
 
     result = run_reply_triage(trigger="manual", write_client=write_client, llm_client=llm_client)
 
-    assert result == {"processed": 1, "skipped_dupes": 0, "leads_found": 0, "status": "ok"}
+    assert result == {"processed": 1, "skipped_dupes": 0, "skipped_malformed": 1, "leads_found": 0, "status": "ok"}
     rows = db_session.query(Reply).all()
     assert [r.threads_reply_id for r in rows] == ["r2"]
 
 
 def test_run_reply_triage_local_get_replies_failure_skips_post_and_continues(db_session, monkeypatch):
     monkeypatch.setattr("src.agents.reply_triage.load_settings", lambda: {"reply_triage_lookback_days": 30})
-    _published_post(db_session, text="первый пост", threads_media_id="m1", posted_at=None)
-    _published_post(db_session, text="второй пост", threads_media_id="m2", posted_at=None)
+    _published_post(db_session, text="первый пост", threads_media_id="m1")
+    _published_post(db_session, text="второй пост", threads_media_id="m2")
     write_client = _FakeWriteClient({
         "m1": ThreadsAPIError("get media_id/replies failed: HTTP 500 — server error"),
         "m2": [{"id": "r2", "text": "Вопрос", "username": "u2", "timestamp": "2026-09-01T10:00:00+0000"}],
@@ -145,8 +142,8 @@ def test_run_reply_triage_stops_on_auth_error_and_alerts(db_session, monkeypatch
     monkeypatch.setattr("src.agents.reply_triage.load_settings", lambda: {"reply_triage_lookback_days": 30})
     alert_mock = MagicMock(return_value=True)
     monkeypatch.setattr("src.agents.reply_triage.send_telegram_alert", alert_mock)
-    _published_post(db_session, text="первый", threads_media_id="m1", posted_at=None)
-    _published_post(db_session, text="второй", threads_media_id="m2", posted_at=None)
+    _published_post(db_session, text="первый", threads_media_id="m1")
+    _published_post(db_session, text="второй", threads_media_id="m2")
     write_client = _FakeWriteClient({
         "m1": ThreadsAPIError("get m1/replies failed: HTTP 403 — permission denied"),
         "m2": [{"id": "r2", "text": "never reached", "username": "u2", "timestamp": "2026-09-01T10:00:00+0000"}],
@@ -238,8 +235,8 @@ def test_run_reply_triage_praise_and_spam_are_ignored_without_draft_or_alert(db_
     monkeypatch.setattr("src.agents.reply_triage.load_settings", lambda: {"reply_triage_lookback_days": 30})
     alert_mock = MagicMock(return_value=True)
     monkeypatch.setattr("src.agents.reply_triage.send_telegram_alert", alert_mock)
-    _published_post(db_session, text="первый", threads_media_id="m1", posted_at=None)
-    _published_post(db_session, text="второй", threads_media_id="m2", posted_at=None)
+    _published_post(db_session, text="первый", threads_media_id="m1")
+    _published_post(db_session, text="второй", threads_media_id="m2")
     write_client = _FakeWriteClient({
         "m1": [{"id": "r1", "text": "Огонь пост!", "username": "u1", "timestamp": "2026-09-01T10:00:00+0000"}],
         "m2": [{"id": "r2", "text": "buy followers now", "username": "u2", "timestamp": "2026-09-01T10:00:00+0000"}],
@@ -257,6 +254,21 @@ def test_run_reply_triage_praise_and_spam_are_ignored_without_draft_or_alert(db_
     assert rows["r1"].status == "ignored" and rows["r1"].draft_response is None
     assert rows["r2"].status == "ignored" and rows["r2"].draft_response is None
     assert db_session.query(Lead).count() == 0
+
+
+def test_run_reply_triage_classifier_label_with_trailing_text_is_still_recognized(db_session, monkeypatch):
+    monkeypatch.setattr("src.agents.reply_triage.load_settings", lambda: {"reply_triage_lookback_days": 30})
+    _published_post(db_session)
+    write_client = _FakeWriteClient({
+        "m1": [{"id": "r1", "text": "Хочу обсудить внедрение", "username": "u1", "timestamp": "2026-09-01T10:00:00+0000"}],
+    })
+    llm_client = _FakeLLMClient(classify_results="это lead, отвечать нужно")
+
+    result = run_reply_triage(trigger="manual", write_client=write_client, llm_client=llm_client)
+
+    assert result["leads_found"] == 1
+    reply = db_session.query(Reply).filter_by(threads_reply_id="r1").one()
+    assert reply.kind == "lead"
 
 
 def test_run_reply_triage_unknown_classifier_label_falls_back_to_spam(db_session, monkeypatch):
