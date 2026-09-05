@@ -61,6 +61,16 @@ def test_run_content_agent_if_queue_low_skips_agent_when_scheduled_count_at_or_a
     agent_instance.run.assert_not_called()
 
 
+def test_build_scheduler_registers_reply_triage_job():
+    scheduler = build_scheduler()
+    jobs = {j.id: j for j in scheduler.get_jobs()}
+
+    assert "reply_triage_every_3h" in jobs
+    job = jobs["reply_triage_every_3h"]
+    assert job.func.__name__ == "run_reply_triage"
+    assert job.trigger.interval.total_seconds() == 3 * 3600
+
+
 def trigger_hour(job) -> int:
     # APScheduler CronTrigger stores its fields as a list; find the "hour" field.
     for field in job.trigger.fields:

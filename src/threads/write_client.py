@@ -87,6 +87,19 @@ class ThreadsWriteClient:
             result[metric["name"]] = values[0].get("value", 0) if values else 0
         return result
 
+    def get_replies(self, media_id: str) -> list[dict]:
+        """GET /{media_id}/replies — replies under the caller's own post.
+        Official API (SPEC.md §4: publish/replies/insights go through the
+        API, not the browser). The exact response shape isn't verified
+        against live data anywhere in this codebase (same caveat as
+        check_publishing_limit(kind="replies")) — confirm field names
+        during a live smoke test and adjust here if they differ."""
+        data = self._request(
+            "get", f"{media_id}/replies",
+            params={"fields": "id,text,username,timestamp,permalink"},
+        )
+        return data.get("data", [])
+
     def check_publishing_limit(self, kind: str = "posts") -> dict:
         data = self._request("get", f"{self._user_id}/threads_publishing_limit")
         entry = data["data"][0]

@@ -1,6 +1,7 @@
 queue_depth: 5
 feed_view_daily_cap: 200
 max_post_age_days: 3
+reply_triage_lookback_days: 30
 budget:
   soft_stop_usd: 8.0
   hard_stop_usd: 10.0
