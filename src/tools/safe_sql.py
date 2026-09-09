@@ -1,3 +1,6 @@
+import datetime
+from decimal import Decimal
+
 import sqlglot
 from sqlglot import exp
 from sqlalchemy import text
@@ -9,6 +12,22 @@ DEFAULT_ROW_LIMIT = 200
 
 class UnsafeQueryError(Exception):
     """Raised when a query fails the read-only/whitelist validation."""
+
+
+def _json_safe(value):
+    """Convert raw DB driver values into JSON-serializable equivalents.
+
+    Numeric columns come back as decimal.Decimal and timestamp/date columns
+    come back as datetime.datetime/date, neither of which the stdlib json
+    module can serialize. Mirrors the Decimal -> float convention already
+    used at the ORM boundary in src/db/repo.py, generalized here since this
+    function doesn't know column types ahead of time.
+    """
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, (datetime.datetime, datetime.date)):
+        return value.isoformat()
+    return value
 
 
 def _validate(query: str) -> str:
@@ -103,7 +122,10 @@ def execute_readonly(session: Session, query: str) -> list[dict] | dict:
         session.execute(text("SET TRANSACTION READ ONLY"))
         result = session.execute(text(safe_query))
         columns = list(result.keys())
-        return [dict(zip(columns, row)) for row in result.fetchall()]
+        return [
+            {col: _json_safe(val) for col, val in zip(columns, row)}
+            for row in result.fetchall()
+        ]
     except Exception as exc:
         # Execution-time failure (e.g. bad column name) leaves the session's
         # transaction needing rollback — without this, the caller's next use

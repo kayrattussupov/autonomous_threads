@@ -1,3 +1,7 @@
+import json
+from datetime import datetime, timezone
+from decimal import Decimal
+
 import pytest
 
 from src.db.models import Post
@@ -222,3 +226,71 @@ def test_validate_preserves_explicit_limit_below_cap():
     safe_sql = _validate("SELECT * FROM posts LIMIT 5")
     assert safe_sql.count("LIMIT") == 1
     assert "LIMIT 5" in safe_sql
+
+
+# Bug fix: Decimal/datetime values from Numeric/DateTime columns are not
+# JSON-serializable and previously crashed the caller (add_agent_step's
+# JSONB write) with TypeError. execute_readonly must return JSON-safe types.
+def test_execute_readonly_converts_decimal_and_datetime_to_json_safe_types(db_session):
+    posted_at = datetime(2026, 3, 15, 12, 30, 0, tzinfo=timezone.utc)
+    post = Post(
+        text="numeric test", category="educational", status="published",
+        score=42.5, posted_at=posted_at,
+    )
+    db_session.add(post)
+    db_session.commit()
+
+    result = execute_readonly(
+        db_session, f"SELECT score, posted_at FROM posts WHERE id = {post.id}"
+    )
+
+    assert isinstance(result, list)
+    assert len(result) == 1
+    row = result[0]
+
+    assert isinstance(row["score"], float)
+    assert not isinstance(row["score"], Decimal)
+    assert row["score"] == 42.5
+
+    assert isinstance(row["posted_at"], str)
+    assert row["posted_at"] == posted_at.isoformat()
+
+    # The actual proof: this must round-trip through real JSON serialization
+    # without raising, exactly as add_agent_step's JSONB write requires.
+    serialized = json.dumps(result)
+    assert json.loads(serialized) == result
+
+
+def test_execute_readonly_result_can_be_stored_via_add_agent_step(db_session):
+    """Mirrors how ReActAgent.run() in src/agents/base.py records the sql()
+    tool result into agent_steps.tool_result (a JSONB column) on every step,
+    outside the tool-call try/except -- a Decimal/datetime leaking through
+    here previously crashed the whole agent run, not just the step."""
+    from src.db.repo import add_agent_step, start_agent_run
+
+    post = Post(
+        text="numeric test", category="educational", status="published",
+        score=Decimal("42.5"), posted_at=datetime(2026, 3, 15, tzinfo=timezone.utc),
+    )
+    db_session.add(post)
+    db_session.commit()
+
+    result = execute_readonly(
+        db_session, f"SELECT score, posted_at FROM posts WHERE id = {post.id}"
+    )
+    # execute_readonly's "SET TRANSACTION READ ONLY" applies for the rest of
+    # the current transaction; commit to start a fresh (writable) one before
+    # inserting the agent run/step below.
+    db_session.commit()
+
+    run = start_agent_run(db_session, agent="analyst", trigger="manual")
+    step = add_agent_step(
+        db_session, run_id=run.id, step_no=1,
+        tool_name="sql", tool_args={"query": "SELECT score, posted_at FROM posts"},
+        tool_result=result, tool_ok=True,
+    )
+    db_session.commit()  # would raise TypeError pre-fix when flushing the JSONB column
+
+    db_session.refresh(step)
+    assert step.tool_result[0]["score"] == 42.5
+    assert isinstance(step.tool_result[0]["posted_at"], str)
