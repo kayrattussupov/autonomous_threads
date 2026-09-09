@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
 from src.db.models import PlaybookRule, Reply, StyleVariant
-from src.db.repo import insert_post, insert_swipe_file_post, recompute_all_post_scores, recompute_style_variant_medians
+from src.db.repo import insert_post, insert_swipe_file_post, recompute_all_post_scores, recompute_style_variant_medians, recompute_playbook_evidence
 
 
 def test_recompute_all_post_scores_uses_replies_kind_and_view_weight(db_session):
@@ -86,3 +86,79 @@ def test_recompute_style_variant_medians_scopes_to_each_variant(db_session):
 
     assert float(variant_a.median_score) == 20.0
     assert float(variant_b.median_score) == 200.0
+
+
+def _seed_published_post(db_session, score, posted_at):
+    return insert_post(
+        db_session, text=f"p-{score}-{posted_at.isoformat()}", category="educational",
+        status="published", score=score, posted_at=posted_at,
+    )
+
+
+def test_recompute_playbook_evidence_promotes_when_threshold_met(db_session):
+    introduced = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    rule = PlaybookRule(rule_text="post more news", status="testing", version=1, introduced_at=introduced)
+    db_session.add(rule)
+    _seed_published_post(db_session, score=10, posted_at=introduced - timedelta(days=1))
+    for i in range(20):
+        _seed_published_post(db_session, score=20, posted_at=introduced + timedelta(days=i + 1))
+    db_session.commit()
+
+    promoted = recompute_playbook_evidence(db_session)
+    db_session.commit()
+    db_session.refresh(rule)
+
+    assert rule in promoted
+    assert rule.status == "confirmed"
+    assert rule.evidence_n == 20
+    assert float(rule.median_before) == 10.0
+    assert float(rule.median_after) == 20.0  # +100% >= 30% required
+
+
+def test_recompute_playbook_evidence_stays_testing_below_evidence_threshold(db_session):
+    introduced = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    rule = PlaybookRule(rule_text="r", status="testing", version=1, introduced_at=introduced)
+    db_session.add(rule)
+    _seed_published_post(db_session, score=10, posted_at=introduced - timedelta(days=1))
+    for i in range(5):  # < 20
+        _seed_published_post(db_session, score=50, posted_at=introduced + timedelta(days=i + 1))
+    db_session.commit()
+
+    promoted = recompute_playbook_evidence(db_session)
+    db_session.commit()
+    db_session.refresh(rule)
+
+    assert promoted == []
+    assert rule.status == "testing"
+    assert rule.evidence_n == 5
+
+
+def test_recompute_playbook_evidence_stays_testing_when_improvement_below_30_percent(db_session):
+    introduced = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    rule = PlaybookRule(rule_text="r", status="testing", version=1, introduced_at=introduced)
+    db_session.add(rule)
+    _seed_published_post(db_session, score=100, posted_at=introduced - timedelta(days=1))
+    for i in range(20):
+        _seed_published_post(db_session, score=110, posted_at=introduced + timedelta(days=i + 1))  # +10%, below 30%
+    db_session.commit()
+
+    promoted = recompute_playbook_evidence(db_session)
+    db_session.commit()
+    db_session.refresh(rule)
+
+    assert promoted == []
+    assert rule.status == "testing"
+
+
+def test_recompute_playbook_evidence_freezes_median_before_after_first_computation(db_session):
+    introduced = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    rule = PlaybookRule(rule_text="r", status="testing", version=1, introduced_at=introduced, median_before=42.0)
+    db_session.add(rule)
+    _seed_published_post(db_session, score=999, posted_at=introduced - timedelta(days=1))  # would change it if recomputed
+    db_session.commit()
+
+    recompute_playbook_evidence(db_session)
+    db_session.commit()
+    db_session.refresh(rule)
+
+    assert float(rule.median_before) == 42.0  # untouched — was already set

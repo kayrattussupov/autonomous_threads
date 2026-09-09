@@ -434,3 +434,46 @@ def recompute_style_variant_medians(session: Session) -> None:
             .where(Post.style_variant_id == variant.id, Post.status == "published", Post.score.isnot(None))
         ).scalar_one_or_none()
         variant.median_score = median
+
+
+def recompute_playbook_evidence(session: Session) -> list[PlaybookRule]:
+    promoted: list[PlaybookRule] = []
+    testing_rules = session.execute(
+        select(PlaybookRule).where(PlaybookRule.status == "testing")
+    ).scalars().all()
+
+    for rule in testing_rules:
+        if rule.median_before is None:
+            rule.median_before = session.execute(
+                select(func.percentile_cont(0.5).within_group(Post.score))
+                .where(Post.status == "published", Post.posted_at < rule.introduced_at, Post.score.isnot(None))
+            ).scalar_one_or_none()
+
+        evidence_n = session.execute(
+            select(func.count())
+            .select_from(Post)
+            .where(Post.status == "published", Post.posted_at >= rule.introduced_at)
+        ).scalar_one()
+        median_after = session.execute(
+            select(func.percentile_cont(0.5).within_group(Post.score))
+            .where(Post.status == "published", Post.posted_at >= rule.introduced_at, Post.score.isnot(None))
+        ).scalar_one_or_none()
+
+        rule.evidence_n = evidence_n
+        rule.median_after = median_after
+
+        if _meets_promotion_threshold(evidence_n, rule.median_before, median_after):
+            rule.status = "confirmed"
+            promoted.append(rule)
+
+    return promoted
+
+
+def _meets_promotion_threshold(evidence_n: int, median_before, median_after) -> bool:
+    return (
+        evidence_n >= 20
+        and median_before is not None
+        and float(median_before) > 0
+        and median_after is not None
+        and float(median_after) >= float(median_before) * 1.3
+    )
