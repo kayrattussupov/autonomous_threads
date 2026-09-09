@@ -1,4 +1,4 @@
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
@@ -529,3 +529,70 @@ def _meets_promotion_threshold(evidence_n: int, median_before, median_after) -> 
         and median_after is not None
         and float(median_after) >= float(median_before) * 1.3
     )
+
+
+def propose_playbook_diff(session: Session, add: list[dict], remove: list[int], rationale: str) -> dict:
+    # rationale isn't stored on playbook_rules (no such column, unlike
+    # style_variants) — it's preserved via the standard agent_steps.tool_args
+    # trace already shown on the dashboard's "Агенты" screen, and reused
+    # verbatim in the end-of-run Telegram summary (src/agents/analyst.py).
+    next_version = (session.execute(select(func.max(PlaybookRule.version))).scalar_one() or 0) + 1
+
+    added_ids = []
+    for item in add:
+        rule = PlaybookRule(
+            rule_text=item["rule_text"],
+            status="proposed",
+            hypothesis=item.get("hypothesis"),
+            target_metric=item.get("target_metric"),
+            version=next_version,
+        )
+        session.add(rule)
+        session.flush()
+        added_ids.append(rule.id)
+
+    removed_ids = []
+    for rule_id in remove:
+        rule = session.get(PlaybookRule, rule_id)
+        if rule is not None and rule.status in ("testing", "confirmed"):
+            rule.status = "proposed_removal"
+            removed_ids.append(rule.id)
+
+    return {"added_ids": added_ids, "removed_ids": removed_ids, "rationale": rationale}
+
+
+def propose_style_variant(session: Session, name: str, genome: str, rationale: str, parent_id: int | None = None) -> StyleVariant:
+    variant = StyleVariant(
+        name=name, genome=genome, status="draft", created_by="analyst",
+        parent_id=parent_id, rationale=rationale,
+    )
+    session.add(variant)
+    session.flush()
+    return variant
+
+
+def get_swipe_stats(session: Session, days: int = 30) -> list[dict]:
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    median_views = func.percentile_cont(0.5).within_group(SwipeFilePost.views)
+    median_likes = func.percentile_cont(0.5).within_group(SwipeFilePost.likes)
+    rows = session.execute(
+        select(
+            SwipeFilePost.topic,
+            func.count().label("count"),
+            median_views.label("median_views"),
+            median_likes.label("median_likes"),
+        )
+        .where(SwipeFilePost.collected_at >= since, SwipeFilePost.topic.isnot(None))
+        .group_by(SwipeFilePost.topic)
+        .order_by(median_views.desc())
+        .limit(15)
+    ).all()
+    return [
+        {
+            "topic": r.topic,
+            "count": r.count,
+            "median_views": float(r.median_views) if r.median_views is not None else None,
+            "median_likes": float(r.median_likes) if r.median_likes is not None else None,
+        }
+        for r in rows
+    ]
