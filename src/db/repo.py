@@ -232,21 +232,49 @@ def _evict_weakest_active_rule(session: Session) -> None:
 
 def approve_playbook_rule(session: Session, rule_id: int) -> PlaybookRule:
     rule = session.get(PlaybookRule, rule_id)
-    if rule is None or rule.status != "proposed":
-        raise InvalidStateTransition(f"playbook_rule {rule_id} is not in a pending 'proposed' state")
-    _evict_weakest_active_rule(session)
-    rule.status = "testing"
+    if rule is None:
+        raise InvalidStateTransition(f"playbook_rule {rule_id} is not in a pending state")
+
+    if rule.status == "proposed":
+        _evict_weakest_active_rule(session)
+        rule.status = "testing"
+    elif rule.status == "proposed_removal":
+        rule.status = "rejected"
+    else:
+        raise InvalidStateTransition(
+            f"playbook_rule {rule_id} is not in a pending 'proposed' or 'proposed_removal' state"
+        )
+
     session.flush()
     return rule
 
 
 def reject_playbook_rule(session: Session, rule_id: int) -> PlaybookRule:
     rule = session.get(PlaybookRule, rule_id)
-    if rule is None or rule.status != "proposed":
-        raise InvalidStateTransition(f"playbook_rule {rule_id} is not in a pending 'proposed' state")
-    rule.status = "rejected"
+    if rule is None:
+        raise InvalidStateTransition(f"playbook_rule {rule_id} is not in a pending state")
+
+    if rule.status == "proposed":
+        rule.status = "rejected"
+    elif rule.status == "proposed_removal":
+        rule.status = _reverted_status(rule)
+    else:
+        raise InvalidStateTransition(
+            f"playbook_rule {rule_id} is not in a pending 'proposed' or 'proposed_removal' state"
+        )
+
     session.flush()
     return rule
+
+
+def _reverted_status(rule: PlaybookRule) -> str:
+    """Undoing a proposed removal restores whichever state the rule's own
+    evidence already earned — there's no separate "status before removal"
+    column, it's derived from the same threshold recompute_playbook_evidence
+    uses."""
+    if _meets_promotion_threshold(rule.evidence_n or 0, rule.median_before, rule.median_after):
+        return "confirmed"
+    return "testing"
 
 
 def _months_ago_start(months: int, today: date | None = None) -> datetime:

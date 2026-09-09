@@ -84,3 +84,37 @@ def test_approve_below_ceiling_does_not_evict(db_session):
     client.post(f"/playbook/{new_rule.id}/approve", headers=AUTH)
 
     assert db_session.query(PlaybookRule).filter_by(status="rejected").count() == 0
+
+def test_approve_proposed_removal_sets_rejected(db_session):
+    rule = PlaybookRule(rule_text="to remove", status="proposed_removal", version=1)
+    db_session.add(rule)
+    db_session.commit()
+
+    response = client.post(f"/playbook/{rule.id}/approve", headers=AUTH)
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "rejected"
+
+
+def test_reject_proposed_removal_reverts_to_testing_when_threshold_not_met(db_session):
+    rule = PlaybookRule(rule_text="keep me", status="proposed_removal", version=1, evidence_n=5)
+    db_session.add(rule)
+    db_session.commit()
+
+    response = client.post(f"/playbook/{rule.id}/reject", headers=AUTH)
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "testing"
+
+
+def test_reject_proposed_removal_reverts_to_confirmed_when_threshold_was_met(db_session):
+    rule = PlaybookRule(
+        rule_text="keep me confirmed", status="proposed_removal", version=1,
+        evidence_n=25, median_before=10.0, median_after=15.0,  # +50% >= 30%
+    )
+    db_session.add(rule)
+    db_session.commit()
+
+    response = client.post(f"/playbook/{rule.id}/reject", headers=AUTH)
+
+    assert response.json()["status"] == "confirmed"
