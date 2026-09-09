@@ -24,16 +24,41 @@ def _validate(query: str) -> str:
     if not isinstance(stmt, exp.Select):
         raise UnsafeQueryError("only SELECT statements are allowed")
 
-    tables = {t.name.lower() for t in stmt.find_all(exp.Table)}
-    disallowed = tables - ALLOWED_TABLES
-    if disallowed:
-        raise UnsafeQueryError(f"tables not allowed: {sorted(disallowed)}")
+    # Check for locking clauses (FOR UPDATE/FOR SHARE)
+    if stmt.args.get("locks"):
+        raise UnsafeQueryError("locking clauses (FOR UPDATE/FOR SHARE) are not allowed")
+
+    # Validate table names and schemas
+    for t in stmt.find_all(exp.Table):
+        table_name = t.name.lower()
+        if table_name not in ALLOWED_TABLES:
+            raise UnsafeQueryError(f"tables not allowed: {table_name}")
+        # Check schema/catalog qualifier - only public schema (or no schema) is allowed
+        if t.db and t.db.lower() != "public":
+            raise UnsafeQueryError(f"schema-qualified table references are not allowed: {t.sql()}")
+
+    # Whitelist of allowed aggregate functions
+    ALLOWED_FUNCTIONS = (
+        exp.Avg,
+        exp.Coalesce,
+        exp.Count,
+        exp.Max,
+        exp.Min,
+        exp.PercentileCont,
+        exp.PercentileDisc,
+        exp.Sum,
+    )
+
+    # Validate function calls - only allowed functions permitted
+    for func in stmt.find_all(exp.Func):
+        if not isinstance(func, ALLOWED_FUNCTIONS):
+            raise UnsafeQueryError(f"function calls are not allowed: {func.sql()}")
 
     safe_sql = stmt.sql(dialect="postgres")
     if stmt.args.get("limit") is None:
-        # Wrap rather than mutate the parsed tree with a builder method — avoids
-        # depending on a specific sqlglot version's Select.limit() signature.
-        safe_sql = f"SELECT * FROM ({safe_sql}) AS _bounded LIMIT {DEFAULT_ROW_LIMIT}"
+        # Append LIMIT as trailing text to preserve ORDER BY semantics
+        # (appending keeps LIMIT in the same SELECT scope as ORDER BY)
+        safe_sql = f"{safe_sql} LIMIT {DEFAULT_ROW_LIMIT}"
     return safe_sql
 
 
@@ -43,6 +68,9 @@ def execute_readonly(session: Session, query: str) -> list[dict] | dict:
     except UnsafeQueryError as exc:
         return {"error": str(exc)}
 
-    result = session.execute(text(safe_query))
-    columns = list(result.keys())
-    return [dict(zip(columns, row)) for row in result.fetchall()]
+    try:
+        result = session.execute(text(safe_query))
+        columns = list(result.keys())
+        return [dict(zip(columns, row)) for row in result.fetchall()]
+    except Exception as exc:
+        return {"error": str(exc)}
