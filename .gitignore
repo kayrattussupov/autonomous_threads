@@ -14,3 +14,9 @@ ssh-keys/
 # src/threads/read_client.py's module-level sys.path import chain runs.
 logs/
 screenshots/
+
+# Claude Code local session/worktree state
+.claude/
+
+# graphify output (regenerate with /graphify)
+graphify-out/
