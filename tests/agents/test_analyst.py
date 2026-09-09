@@ -2,7 +2,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
-from src.agents.analyst import AnalystAgent, recompute_nightly_metrics
+from src.agents.analyst import ANALYST_TOOL_SELECTION_PROMPT, AnalystAgent, _cap_rows, recompute_nightly_metrics
 from src.db.models import AgentRun, PlaybookRule, StyleVariant
 from src.db.repo import insert_post
 from src.llm.client import LLMResponse
@@ -172,6 +172,69 @@ def test_analyst_agent_sql_tool_rejects_unsafe_query_without_aborting_run(db_ses
     steps = db_session.query(AgentRun).filter_by(id=run.id).one().steps
     assert steps[0].tool_name == "sql"
     assert "error" in steps[0].tool_result
+
+
+def test_cap_rows_passes_through_when_under_cap():
+    result = [{"id": i} for i in range(5)]
+    assert _cap_rows(result, max_rows=30) == result
+
+
+def test_cap_rows_truncates_when_over_cap():
+    result = [{"id": i} for i in range(50)]
+    capped = _cap_rows(result, max_rows=30)
+    assert capped["truncated"] is True
+    assert capped["shown"] == 30
+    assert capped["total"] == 50
+    assert len(capped["rows"]) == 30
+    assert capped["rows"] == result[:30]
+
+
+def test_cap_rows_passes_through_non_list_results_unchanged():
+    error_result = {"error": "boom"}
+    assert _cap_rows(error_result) is error_result
+
+
+def test_analyst_agent_sql_tool_caps_large_result_before_appending_to_history(db_session, monkeypatch):
+    for i in range(50):
+        insert_post(db_session, text=f"p{i}", category="educational", status="published", score=i)
+    db_session.commit()
+
+    script = [
+        _tool_call_json("sql", {"query": "SELECT id, text FROM posts"}),
+        _tool_call_json("finish", {"summary": "готово"}),
+    ]
+    monkeypatch.setattr("src.agents.analyst.send_telegram_alert", MagicMock(return_value=True))
+
+    agent = AnalystAgent(llm_client=_ScriptedLLMClient(script))
+    run = agent.run(trigger="manual")
+
+    assert run.status == "ok"
+    steps = db_session.query(AgentRun).filter_by(id=run.id).one().steps
+    sql_step = next(s for s in steps if s.tool_name == "sql")
+    assert sql_step.tool_result["truncated"] is True
+    assert sql_step.tool_result["shown"] == 30
+    assert sql_step.tool_result["total"] == 50
+
+
+def test_analyst_tool_selection_prompt_includes_today_and_sql_constraints():
+    rendered_prompts = []
+
+    class _CapturingLLMClient:
+        def complete(self, role, messages, run_id=None, step_no=None):
+            rendered_prompts.append(messages[-1]["content"])
+            return LLMResponse(
+                text=_tool_call_json("finish", {"summary": "done"}),
+                tokens_in=1, tokens_out=1, cost_usd=0.0, model="kimi-k2.6", finish_reason="stop",
+            )
+
+    agent = AnalystAgent(llm_client=_CapturingLLMClient())
+    agent.decide_next_action([])
+    prompt = rendered_prompts[-1]
+
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    assert today in prompt
+    assert "LIMIT" in prompt
+    assert "{today}" not in ANALYST_TOOL_SELECTION_PROMPT.replace("{today}", today)
 
 
 def test_analyst_agent_finish_without_proposals_alerts_no_proposals(db_session, monkeypatch):
