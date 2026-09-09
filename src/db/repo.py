@@ -1,6 +1,6 @@
 from datetime import date, datetime, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from src.db.models import (
@@ -391,3 +391,36 @@ def get_posts_for_reply_triage(session: Session, since: datetime) -> list[Post]:
         .where(Post.status == "published", Post.threads_media_id.is_not(None), Post.posted_at >= since)
         .order_by(Post.posted_at.desc())
     ).scalars().all())
+
+
+def recompute_all_post_scores(session: Session) -> int:
+    """SPEC.md §7: score = 100*leads + 10*conversations + 1*replies + 0.01*views.
+    leads/conversations are derived from replies.kind — posts has no such
+    columns. One UPDATE with correlated subqueries, not a Python loop."""
+    leads_sq = (
+        select(func.count())
+        .select_from(Reply)
+        .where(Reply.post_id == Post.id, Reply.kind == "lead")
+        .correlate(Post)
+        .scalar_subquery()
+    )
+    conversations_sq = (
+        select(func.count())
+        .select_from(Reply)
+        .where(Reply.post_id == Post.id, Reply.kind.in_(["question", "objection"]))
+        .correlate(Post)
+        .scalar_subquery()
+    )
+    result = session.execute(
+        update(Post)
+        .where(Post.status == "published")
+        .values(
+            score=(
+                100 * leads_sq
+                + 10 * conversations_sq
+                + func.coalesce(Post.replies_count, 0)
+                + 0.01 * func.coalesce(Post.views, 0)
+            )
+        )
+    )
+    return result.rowcount
