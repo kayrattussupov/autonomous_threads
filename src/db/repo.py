@@ -424,3 +424,13 @@ def recompute_all_post_scores(session: Session) -> int:
         )
     )
     return result.rowcount
+
+
+def recompute_style_variant_medians(session: Session) -> None:
+    variants = session.execute(select(StyleVariant)).scalars().all()
+    for variant in variants:
+        median = session.execute(
+            select(func.percentile_cont(0.5).within_group(Post.score))
+            .where(Post.style_variant_id == variant.id, Post.status == "published", Post.score.isnot(None))
+        ).scalar_one_or_none()
+        variant.median_score = median

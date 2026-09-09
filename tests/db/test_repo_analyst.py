@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
 from src.db.models import PlaybookRule, Reply, StyleVariant
-from src.db.repo import insert_post, insert_swipe_file_post, recompute_all_post_scores
+from src.db.repo import insert_post, insert_swipe_file_post, recompute_all_post_scores, recompute_style_variant_medians
 
 
 def test_recompute_all_post_scores_uses_replies_kind_and_view_weight(db_session):
@@ -29,3 +29,19 @@ def test_recompute_all_post_scores_ignores_non_published_posts(db_session):
     updated = recompute_all_post_scores(db_session)
 
     assert updated == 0
+
+
+def test_recompute_style_variant_medians_computes_median_of_published_scored_posts(db_session):
+    variant = StyleVariant(name="v1", genome="g", status="active", created_by="human", posts_n=3)
+    db_session.add(variant)
+    db_session.commit()
+    for score in (10, 20, 30):
+        insert_post(db_session, text=f"p{score}", category="educational", status="published", style_variant_id=variant.id, score=score)
+    insert_post(db_session, text="draft not counted", category="educational", status="draft", style_variant_id=variant.id, score=999)
+    db_session.commit()
+
+    recompute_style_variant_medians(db_session)
+    db_session.commit()
+    db_session.refresh(variant)
+
+    assert float(variant.median_score) == 20.0
