@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
 from src.db.models import PlaybookRule, Reply, StyleVariant, SwipeFilePost
-from src.db.repo import insert_post, insert_swipe_file_post, recompute_all_post_scores, recompute_style_variant_medians, recompute_playbook_evidence, get_swipe_stats, propose_playbook_diff, propose_style_variant
+from src.db.repo import approve_playbook_rule, insert_post, insert_swipe_file_post, recompute_all_post_scores, recompute_style_variant_medians, recompute_playbook_evidence, get_swipe_stats, propose_playbook_diff, propose_style_variant
 
 
 def test_recompute_all_post_scores_uses_replies_kind_and_view_weight(db_session):
@@ -212,18 +212,39 @@ def test_propose_style_variant_creates_draft_authored_by_analyst(db_session):
     assert variant.rationale == "radical shift"
 
 
-def test_get_swipe_stats_aggregates_by_topic_within_window(db_session):
+def test_approve_playbook_rule_restamps_introduced_at_on_proposed_to_testing(db_session):
+    old_stamp = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    rule = PlaybookRule(rule_text="r", status="proposed", version=1, introduced_at=old_stamp)
+    db_session.add(rule)
+    db_session.commit()
+
+    approve_playbook_rule(db_session, rule.id)
+    db_session.commit()
+    db_session.refresh(rule)
+
+    assert rule.status == "testing"
+    assert rule.introduced_at != old_stamp
     now = datetime.now(timezone.utc)
-    insert_swipe_file_post(db_session, threads_post_id="a", text="t1", topic="automation", views=100, likes=10)
+    assert (now - rule.introduced_at) < timedelta(seconds=10)
+
+
+def test_get_swipe_stats_aggregates_by_topic_within_window(db_session):
+    # Three distinct in-window values (10, 20, 900) so median (20) and mean
+    # (~310) clearly diverge — a regression to avg() would fail this test.
+    now = datetime.now(timezone.utc)
+    insert_swipe_file_post(db_session, threads_post_id="a", text="t1", topic="automation", views=10, likes=1)
+    insert_swipe_file_post(db_session, threads_post_id="b", text="t2", topic="automation", views=20, likes=2)
+    insert_swipe_file_post(db_session, threads_post_id="c", text="t3", topic="automation", views=900, likes=90)
     db_session.commit()
-    a = db_session.query(SwipeFilePost).filter_by(threads_post_id="a").one()
-    a.collected_at = now - timedelta(days=5)
-    insert_swipe_file_post(db_session, threads_post_id="b", text="t2", topic="automation", views=200, likes=20)
+    for post_id, days_ago in (("a", 5), ("b", 10), ("c", 15)):
+        row = db_session.query(SwipeFilePost).filter_by(threads_post_id=post_id).one()
+        row.collected_at = now - timedelta(days=days_ago)
+    insert_swipe_file_post(db_session, threads_post_id="d", text="t4", topic="automation", views=99999, likes=9999)
     db_session.commit()
-    b = db_session.query(SwipeFilePost).filter_by(threads_post_id="b").one()
-    b.collected_at = now - timedelta(days=40)  # outside 30-day window
+    d = db_session.query(SwipeFilePost).filter_by(threads_post_id="d").one()
+    d.collected_at = now - timedelta(days=40)  # outside 30-day window
     db_session.commit()
 
     stats = get_swipe_stats(db_session, days=30)
 
-    assert stats == [{"topic": "automation", "count": 1, "median_views": 100.0, "median_likes": 10.0}]
+    assert stats == [{"topic": "automation", "count": 3, "median_views": 20.0, "median_likes": 2.0}]

@@ -238,6 +238,13 @@ def approve_playbook_rule(session: Session, rule_id: int) -> PlaybookRule:
     if rule.status == "proposed":
         _evict_weakest_active_rule(session)
         rule.status = "testing"
+        # Restamp introduced_at now, not at INSERT time (propose_playbook_diff).
+        # A rule can sit in 'proposed' status for however long a human takes
+        # to review it — posts published during that review window must not
+        # be counted as evidence for a rule that wasn't actually in effect
+        # yet (recompute_playbook_evidence uses introduced_at as the
+        # before/after evidence split point).
+        rule.introduced_at = datetime.now(timezone.utc)
     elif rule.status == "proposed_removal":
         rule.status = "rejected"
     else:
