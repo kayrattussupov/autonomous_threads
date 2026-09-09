@@ -24,9 +24,10 @@ def _validate(query: str) -> str:
     if not isinstance(stmt, exp.Select):
         raise UnsafeQueryError("only SELECT statements are allowed")
 
-    # Check for locking clauses (FOR UPDATE/FOR SHARE)
-    if stmt.args.get("locks"):
-        raise UnsafeQueryError("locking clauses (FOR UPDATE/FOR SHARE) are not allowed")
+    # Check for locking clauses (FOR UPDATE/FOR SHARE) in all nested SELECT statements
+    for select_node in stmt.find_all(exp.Select):
+        if select_node.args.get("locks"):
+            raise UnsafeQueryError("locking clauses (FOR UPDATE/FOR SHARE) are not allowed")
 
     # Validate table names and schemas
     for t in stmt.find_all(exp.Table):
@@ -36,6 +37,9 @@ def _validate(query: str) -> str:
         # Check schema/catalog qualifier - only public schema (or no schema) is allowed
         if t.db and t.db.lower() != "public":
             raise UnsafeQueryError(f"schema-qualified table references are not allowed: {t.sql()}")
+        # Check catalog-qualified table references (three-part names like catalog.schema.table)
+        if t.catalog:
+            raise UnsafeQueryError(f"catalog-qualified table references are not allowed: {t.sql()}")
 
     # Whitelist of allowed aggregate functions
     ALLOWED_FUNCTIONS = (

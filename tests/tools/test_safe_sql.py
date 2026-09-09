@@ -120,3 +120,41 @@ def test_validate_allows_aggregate_functions(db_session):
     assert isinstance(rows, list)
     assert len(rows) == 1
     assert "total" in rows[0]
+
+
+# Round 2 Fix 1: Catalog-qualified table names bypass the whitelist
+def test_validate_rejects_catalog_qualified_tables_three_part_names(db_session):
+    """Catalog-qualified three-part table references (catalog.schema.table) should be rejected."""
+    # SELECT * FROM mydb.public.posts has mydb in catalog, public in db, posts as name
+    result = execute_readonly(db_session, "SELECT * FROM mydb.public.posts")
+    assert "error" in result
+    assert "catalog-qualified" in result["error"].lower()
+
+
+def test_validate_rejects_catalog_qualified_tables_other_catalog(db_session):
+    """Catalog-qualified table references with other catalog names should be rejected."""
+    result = execute_readonly(db_session, "SELECT * FROM other_catalog.public.leads")
+    assert "error" in result
+    assert "catalog-qualified" in result["error"].lower()
+
+
+# Round 2 Fix 2: Locking clauses nested inside subqueries bypass the check
+def test_validate_rejects_locking_clauses_in_subquery(db_session):
+    """Locking clauses nested inside subqueries should be rejected."""
+    result = execute_readonly(db_session, "SELECT * FROM (SELECT * FROM posts FOR UPDATE) sub")
+    assert "error" in result
+    assert "locking" in result["error"].lower()
+
+
+def test_validate_rejects_locking_clauses_in_where_subquery(db_session):
+    """Locking clauses in WHERE clause subqueries should be rejected."""
+    result = execute_readonly(db_session, "SELECT * FROM posts WHERE id IN (SELECT id FROM leads FOR UPDATE)")
+    assert "error" in result
+    assert "locking" in result["error"].lower()
+
+
+def test_validate_rejects_top_level_locking_clauses_regression(db_session):
+    """Regression check: top-level locking clauses should still be rejected."""
+    result = execute_readonly(db_session, "SELECT * FROM posts FOR UPDATE")
+    assert "error" in result
+    assert "locking" in result["error"].lower()
