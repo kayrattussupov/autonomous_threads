@@ -45,15 +45,19 @@ function RuleRow({ rule }: { rule: PlaybookRule }) {
         {rule.median_before ?? "—"} → {rule.median_after ?? "—"}
       </td>
       <td>
-        {rule.status === "proposed" && (
+        {(rule.status === "proposed" || rule.status === "proposed_removal") && (
           <>
             <form action={approveAction} style={{ display: "inline" }}>
               <input type="hidden" name="id" value={rule.id} />
-              <button type="submit">Принять</button>
+              <button type="submit">
+                {rule.status === "proposed_removal" ? "Одобрить удаление" : "Принять"}
+              </button>
             </form>{" "}
             <form action={rejectAction} style={{ display: "inline" }}>
               <input type="hidden" name="id" value={rule.id} />
-              <button type="submit">Отклонить</button>
+              <button type="submit">
+                {rule.status === "proposed_removal" ? "Отменить удаление" : "Отклонить"}
+              </button>
             </form>
           </>
         )}

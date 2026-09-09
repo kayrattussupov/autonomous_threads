@@ -5,7 +5,7 @@ import pytest
 from openai import RateLimitError
 
 from src.db.repo import insert_post
-from src.scheduler import build_scheduler, run_content_agent_if_queue_low
+from src.scheduler import build_scheduler, run_content_agent_if_queue_low, run_analyst_agent_monthly
 
 
 def _rate_limit_error() -> RateLimitError:
@@ -122,3 +122,36 @@ def trigger_hour(job) -> int:
         if field.name == "hour":
             return int(str(field))
     raise AssertionError(f"no hour field on trigger {job.trigger}")
+
+
+def test_build_scheduler_registers_analyst_nightly_recompute_job():
+    scheduler = build_scheduler()
+    jobs = {j.id: j for j in scheduler.get_jobs()}
+
+    assert "analyst_nightly_recompute" in jobs
+    job = jobs["analyst_nightly_recompute"]
+    assert job.func.__name__ == "recompute_nightly_metrics"
+    assert trigger_hour(job) == 3
+
+
+def test_build_scheduler_registers_analyst_agent_monthly_job():
+    scheduler = build_scheduler()
+    jobs = {j.id: j for j in scheduler.get_jobs()}
+
+    assert "analyst_agent_monthly" in jobs
+    job = jobs["analyst_agent_monthly"]
+    assert job.func.__name__ == "run_analyst_agent_monthly"
+    assert trigger_hour(job) == 20
+    day_field = next(f for f in job.trigger.fields if f.name == "day")
+    assert str(day_field) == "1"
+
+
+def test_run_analyst_agent_monthly_invokes_agent_with_cron_trigger(monkeypatch):
+    agent_instance = MagicMock()
+    agent_class = MagicMock(return_value=agent_instance)
+    monkeypatch.setattr("src.scheduler.AnalystAgent", agent_class)
+
+    run_analyst_agent_monthly()
+
+    agent_class.assert_called_once_with()
+    agent_instance.run.assert_called_once_with(trigger="cron")

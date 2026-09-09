@@ -1,6 +1,6 @@
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from src.db.models import (
@@ -207,22 +207,81 @@ def list_playbook_rules(session: Session) -> list[PlaybookRule]:
     return list(session.execute(stmt).scalars().all())
 
 
+PLAYBOOK_RULE_CEILING = 12
+
+
+def _evict_weakest_active_rule(session: Session) -> None:
+    active = session.execute(
+        select(PlaybookRule).where(PlaybookRule.status.in_(["testing", "confirmed"]))
+    ).scalars().all()
+    if len(active) < PLAYBOOK_RULE_CEILING:
+        return
+
+    def _rank(rule: PlaybookRule) -> tuple[float, datetime]:
+        if rule.median_after is not None:
+            metric = float(rule.median_after)
+        elif rule.median_before is not None:
+            metric = float(rule.median_before)
+        else:
+            metric = float("-inf")
+        return (metric, rule.introduced_at)
+
+    weakest = min(active, key=_rank)
+    weakest.status = "rejected"
+
+
 def approve_playbook_rule(session: Session, rule_id: int) -> PlaybookRule:
     rule = session.get(PlaybookRule, rule_id)
-    if rule is None or rule.status != "proposed":
-        raise InvalidStateTransition(f"playbook_rule {rule_id} is not in a pending 'proposed' state")
-    rule.status = "testing"
+    if rule is None:
+        raise InvalidStateTransition(f"playbook_rule {rule_id} is not in a pending state")
+
+    if rule.status == "proposed":
+        _evict_weakest_active_rule(session)
+        rule.status = "testing"
+        # Restamp introduced_at now, not at INSERT time (propose_playbook_diff).
+        # A rule can sit in 'proposed' status for however long a human takes
+        # to review it — posts published during that review window must not
+        # be counted as evidence for a rule that wasn't actually in effect
+        # yet (recompute_playbook_evidence uses introduced_at as the
+        # before/after evidence split point).
+        rule.introduced_at = datetime.now(timezone.utc)
+    elif rule.status == "proposed_removal":
+        rule.status = "rejected"
+    else:
+        raise InvalidStateTransition(
+            f"playbook_rule {rule_id} is not in a pending 'proposed' or 'proposed_removal' state"
+        )
+
     session.flush()
     return rule
 
 
 def reject_playbook_rule(session: Session, rule_id: int) -> PlaybookRule:
     rule = session.get(PlaybookRule, rule_id)
-    if rule is None or rule.status != "proposed":
-        raise InvalidStateTransition(f"playbook_rule {rule_id} is not in a pending 'proposed' state")
-    rule.status = "rejected"
+    if rule is None:
+        raise InvalidStateTransition(f"playbook_rule {rule_id} is not in a pending state")
+
+    if rule.status == "proposed":
+        rule.status = "rejected"
+    elif rule.status == "proposed_removal":
+        rule.status = _reverted_status(rule)
+    else:
+        raise InvalidStateTransition(
+            f"playbook_rule {rule_id} is not in a pending 'proposed' or 'proposed_removal' state"
+        )
+
     session.flush()
     return rule
+
+
+def _reverted_status(rule: PlaybookRule) -> str:
+    """Undoing a proposed removal restores whichever state the rule's own
+    evidence already earned — there's no separate "status before removal"
+    column, it's derived from the same threshold recompute_playbook_evidence
+    uses."""
+    if _meets_promotion_threshold(rule.evidence_n or 0, rule.median_before, rule.median_after):
+        return "confirmed"
+    return "testing"
 
 
 def _months_ago_start(months: int, today: date | None = None) -> datetime:
@@ -391,3 +450,156 @@ def get_posts_for_reply_triage(session: Session, since: datetime) -> list[Post]:
         .where(Post.status == "published", Post.threads_media_id.is_not(None), Post.posted_at >= since)
         .order_by(Post.posted_at.desc())
     ).scalars().all())
+
+
+def recompute_all_post_scores(session: Session) -> int:
+    """SPEC.md §7: score = 100*leads + 10*conversations + 1*replies + 0.01*views.
+    leads/conversations are derived from replies.kind — posts has no such
+    columns. One UPDATE with correlated subqueries, not a Python loop."""
+    leads_sq = (
+        select(func.count())
+        .select_from(Reply)
+        .where(Reply.post_id == Post.id, Reply.kind == "lead")
+        .correlate(Post)
+        .scalar_subquery()
+    )
+    conversations_sq = (
+        select(func.count())
+        .select_from(Reply)
+        .where(Reply.post_id == Post.id, Reply.kind.in_(["question", "objection"]))
+        .correlate(Post)
+        .scalar_subquery()
+    )
+    result = session.execute(
+        update(Post)
+        .where(Post.status == "published")
+        .values(
+            score=(
+                100 * leads_sq
+                + 10 * conversations_sq
+                + func.coalesce(Post.replies_count, 0)
+                + 0.01 * func.coalesce(Post.views, 0)
+            )
+        )
+    )
+    return result.rowcount
+
+
+def recompute_style_variant_medians(session: Session) -> None:
+    variants = session.execute(select(StyleVariant)).scalars().all()
+    for variant in variants:
+        median = session.execute(
+            select(func.percentile_cont(0.5).within_group(Post.score))
+            .where(Post.style_variant_id == variant.id, Post.status == "published", Post.score.isnot(None))
+        ).scalar_one_or_none()
+        variant.median_score = median
+
+
+def recompute_playbook_evidence(session: Session) -> list[PlaybookRule]:
+    promoted: list[PlaybookRule] = []
+    testing_rules = session.execute(
+        select(PlaybookRule).where(PlaybookRule.status == "testing")
+    ).scalars().all()
+
+    for rule in testing_rules:
+        if rule.median_before is None:
+            rule.median_before = session.execute(
+                select(func.percentile_cont(0.5).within_group(Post.score))
+                .where(Post.status == "published", Post.posted_at < rule.introduced_at, Post.score.isnot(None))
+            ).scalar_one_or_none()
+
+        evidence_n = session.execute(
+            select(func.count())
+            .select_from(Post)
+            .where(Post.status == "published", Post.posted_at >= rule.introduced_at)
+        ).scalar_one()
+        median_after = session.execute(
+            select(func.percentile_cont(0.5).within_group(Post.score))
+            .where(Post.status == "published", Post.posted_at >= rule.introduced_at, Post.score.isnot(None))
+        ).scalar_one_or_none()
+
+        rule.evidence_n = evidence_n
+        rule.median_after = median_after
+
+        if _meets_promotion_threshold(evidence_n, rule.median_before, median_after):
+            rule.status = "confirmed"
+            promoted.append(rule)
+
+    return promoted
+
+
+def _meets_promotion_threshold(evidence_n: int, median_before, median_after) -> bool:
+    return (
+        evidence_n >= 20
+        and median_before is not None
+        and float(median_before) > 0
+        and median_after is not None
+        and float(median_after) >= float(median_before) * 1.3
+    )
+
+
+def propose_playbook_diff(session: Session, add: list[dict], remove: list[int], rationale: str) -> dict:
+    # rationale isn't stored on playbook_rules (no such column, unlike
+    # style_variants) — it's preserved via the standard agent_steps.tool_args
+    # trace already shown on the dashboard's "Агенты" screen, and reused
+    # verbatim in the end-of-run Telegram summary (src/agents/analyst.py).
+    next_version = (session.execute(select(func.max(PlaybookRule.version))).scalar_one() or 0) + 1
+
+    added_ids = []
+    for item in add:
+        rule = PlaybookRule(
+            rule_text=item["rule_text"],
+            status="proposed",
+            hypothesis=item.get("hypothesis"),
+            target_metric=item.get("target_metric"),
+            version=next_version,
+        )
+        session.add(rule)
+        session.flush()
+        added_ids.append(rule.id)
+
+    removed_ids = []
+    for rule_id in remove:
+        rule = session.get(PlaybookRule, rule_id)
+        if rule is not None and rule.status in ("testing", "confirmed"):
+            rule.status = "proposed_removal"
+            removed_ids.append(rule.id)
+
+    return {"added_ids": added_ids, "removed_ids": removed_ids, "rationale": rationale}
+
+
+def propose_style_variant(session: Session, name: str, genome: str, rationale: str, parent_id: int | None = None) -> StyleVariant:
+    variant = StyleVariant(
+        name=name, genome=genome, status="draft", created_by="analyst",
+        parent_id=parent_id, rationale=rationale,
+    )
+    session.add(variant)
+    session.flush()
+    return variant
+
+
+def get_swipe_stats(session: Session, days: int = 30) -> list[dict]:
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    median_views = func.percentile_cont(0.5).within_group(SwipeFilePost.views)
+    median_likes = func.percentile_cont(0.5).within_group(SwipeFilePost.likes)
+    rows = session.execute(
+        select(
+            SwipeFilePost.topic,
+            func.count().label("count"),
+            median_views.label("median_views"),
+            median_likes.label("median_likes"),
+        )
+        .where(SwipeFilePost.collected_at >= since, SwipeFilePost.topic.isnot(None))
+        .group_by(SwipeFilePost.topic)
+        .order_by(median_views.desc())
+        .limit(15)
+    ).all()
+    return [
+        {
+            "topic": r.topic,
+            "count": r.count,
+            "median_views": float(r.median_views) if r.median_views is not None else None,
+            "median_likes": float(r.median_likes) if r.median_likes is not None else None,
+        }
+        for r in rows
+    ]

@@ -3,6 +3,7 @@ import time
 from apscheduler.schedulers.background import BackgroundScheduler
 from openai import RateLimitError
 
+from src.agents.analyst import AnalystAgent, recompute_nightly_metrics
 from src.agents.content import ContentAgent
 from src.agents.feed_miner import run_feed_miner
 from src.agents.publisher import publish_scheduled_posts
@@ -35,6 +36,10 @@ def run_content_agent_if_queue_low():
             time.sleep(CONTENT_AGENT_RETRY_BACKOFF_SECONDS * attempt)
 
 
+def run_analyst_agent_monthly():
+    AnalystAgent().run(trigger="cron")
+
+
 def build_scheduler() -> BackgroundScheduler:
     scheduler = BackgroundScheduler(timezone=TIMEZONE)
     scheduler.add_job(
@@ -57,13 +62,21 @@ def build_scheduler() -> BackgroundScheduler:
         run_reply_triage, trigger="interval", hours=3,
         id="reply_triage_every_3h", kwargs={"trigger": "cron"},
     )
+    scheduler.add_job(
+        recompute_nightly_metrics, trigger="cron", hour=3, minute=0,
+        id="analyst_nightly_recompute", kwargs={"trigger": "cron"},
+    )
+    scheduler.add_job(
+        run_analyst_agent_monthly, trigger="cron", day=1, hour=20, minute=0,
+        id="analyst_agent_monthly",
+    )
     return scheduler
 
 
 def main():
     scheduler = build_scheduler()
     scheduler.start()
-    print(f"worker started — feed_miner 08:00/20:00, content_agent hourly, publisher every 10min, reply_triage every 3h ({TIMEZONE})")
+    print(f"worker started -- feed_miner 08:00/20:00, content_agent hourly, publisher every 10min, reply_triage every 3h, analyst recompute nightly 03:00, analyst_agent monthly ({TIMEZONE})")
     try:
         while True:
             time.sleep(3600)
