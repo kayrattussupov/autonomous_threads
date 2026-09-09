@@ -45,3 +45,44 @@ def test_recompute_style_variant_medians_computes_median_of_published_scored_pos
     db_session.refresh(variant)
 
     assert float(variant.median_score) == 20.0
+
+
+def test_recompute_style_variant_medians_sets_median_to_none_for_zero_posts(db_session):
+    variant = StyleVariant(name="v1", genome="g", status="active", created_by="human", posts_n=0, median_score=99.0)
+    db_session.add(variant)
+    db_session.commit()
+    # Create a draft post that won't be counted
+    insert_post(db_session, text="draft not counted", category="educational", status="draft", style_variant_id=variant.id, score=999)
+    db_session.commit()
+
+    recompute_style_variant_medians(db_session)
+    db_session.commit()
+    db_session.refresh(variant)
+
+    assert variant.median_score is None
+
+
+def test_recompute_style_variant_medians_scopes_to_each_variant(db_session):
+    variant_a = StyleVariant(name="variant_a", genome="g_a", status="active", created_by="human", posts_n=3)
+    variant_b = StyleVariant(name="variant_b", genome="g_b", status="active", created_by="human", posts_n=3)
+    db_session.add(variant_a)
+    db_session.add(variant_b)
+    db_session.commit()
+
+    # Variant A: scores 10, 20, 30 (median 20)
+    for score in (10, 20, 30):
+        insert_post(db_session, text=f"variant_a_p{score}", category="educational", status="published", style_variant_id=variant_a.id, score=score)
+
+    # Variant B: scores 100, 200, 300 (median 200)
+    for score in (100, 200, 300):
+        insert_post(db_session, text=f"variant_b_p{score}", category="educational", status="published", style_variant_id=variant_b.id, score=score)
+
+    db_session.commit()
+
+    recompute_style_variant_medians(db_session)
+    db_session.commit()
+    db_session.refresh(variant_a)
+    db_session.refresh(variant_b)
+
+    assert float(variant_a.median_score) == 20.0
+    assert float(variant_b.median_score) == 200.0
