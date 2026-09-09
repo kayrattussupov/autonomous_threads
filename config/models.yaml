@@ -5,11 +5,16 @@ providers:
   kimi:
     base_url: https://api.moonshot.ai/v1
     key_env: KIMI_API_KEY
+    # kimi-k2.6 is a reasoning model that otherwise spends completion
+    # tokens on hidden reasoning before the JSON answer — this agent's
+    # ReAct tool-calling loop wants a direct answer, not a thinking trace,
+    # and the max_tokens budget below assumes reasoning is off.
+    extra_body: { thinking: { type: disabled } }
 
 roles:
-  post_writer:   { provider: glm, model: glm-4.7,       max_tokens: 2000 }
-  analyst:       { provider: glm, model: glm-4.7,       max_tokens: 8000 }
-  commenter:     { provider: glm, model: glm-4.7,       max_tokens: 500 }
-  lead_scorer:   { provider: glm, model: glm-4.7-flash, max_tokens: 300 }
-  style_critic:  { provider: glm, model: glm-4.7-flash, max_tokens: 400 }
-  classifier:    { provider: glm, model: glm-4.7-flash, max_tokens: 200 }
+  post_writer:   { provider: kimi, model: kimi-k2.6, max_tokens: 2000 }
+  analyst:       { provider: kimi, model: kimi-k2.6, max_tokens: 8000 }
+  commenter:     { provider: kimi, model: kimi-k2.6, max_tokens: 500 }
+  lead_scorer:   { provider: kimi, model: kimi-k2.6, max_tokens: 300 }
+  style_critic:  { provider: kimi, model: kimi-k2.6, max_tokens: 400 }
+  classifier:    { provider: kimi, model: kimi-k2.6, max_tokens: 200 }

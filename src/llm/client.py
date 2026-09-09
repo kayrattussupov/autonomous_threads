@@ -67,11 +67,12 @@ class LLMClient:
         role_conf = self._config["roles"][role]
         provider, model, max_tokens = role_conf["provider"], role_conf["model"], role_conf["max_tokens"]
         client = self._client_for(provider)
+        extra_body = self._config["providers"][provider].get("extra_body")
 
         prompt_sha = hashlib.sha256(json.dumps(messages, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
         started = time.monotonic()
-        resp = client.chat.completions.create(model=model, messages=messages, max_tokens=max_tokens)
+        resp = client.chat.completions.create(model=model, messages=messages, max_tokens=max_tokens, extra_body=extra_body)
         latency_ms = int((time.monotonic() - started) * 1000)
 
         usage = resp.usage
