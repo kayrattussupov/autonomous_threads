@@ -207,10 +207,34 @@ def list_playbook_rules(session: Session) -> list[PlaybookRule]:
     return list(session.execute(stmt).scalars().all())
 
 
+PLAYBOOK_RULE_CEILING = 12
+
+
+def _evict_weakest_active_rule(session: Session) -> None:
+    active = session.execute(
+        select(PlaybookRule).where(PlaybookRule.status.in_(["testing", "confirmed"]))
+    ).scalars().all()
+    if len(active) < PLAYBOOK_RULE_CEILING:
+        return
+
+    def _rank(rule: PlaybookRule) -> tuple[float, datetime]:
+        if rule.median_after is not None:
+            metric = float(rule.median_after)
+        elif rule.median_before is not None:
+            metric = float(rule.median_before)
+        else:
+            metric = float("-inf")
+        return (metric, rule.introduced_at)
+
+    weakest = min(active, key=_rank)
+    weakest.status = "rejected"
+
+
 def approve_playbook_rule(session: Session, rule_id: int) -> PlaybookRule:
     rule = session.get(PlaybookRule, rule_id)
     if rule is None or rule.status != "proposed":
         raise InvalidStateTransition(f"playbook_rule {rule_id} is not in a pending 'proposed' state")
+    _evict_weakest_active_rule(session)
     rule.status = "testing"
     session.flush()
     return rule
