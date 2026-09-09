@@ -258,6 +258,8 @@ def test_run_reply_triage_praise_and_spam_are_ignored_without_draft_or_alert(db_
 
 def test_run_reply_triage_classifier_label_with_trailing_text_is_still_recognized(db_session, monkeypatch):
     monkeypatch.setattr("src.agents.reply_triage.load_settings", lambda: {"reply_triage_lookback_days": 30})
+    alert_mock = MagicMock(return_value=True)
+    monkeypatch.setattr("src.agents.reply_triage.send_telegram_alert", alert_mock)
     _published_post(db_session)
     write_client = _FakeWriteClient({
         "m1": [{"id": "r1", "text": "Хочу обсудить внедрение", "username": "u1", "timestamp": "2026-09-01T10:00:00+0000"}],
@@ -269,6 +271,7 @@ def test_run_reply_triage_classifier_label_with_trailing_text_is_still_recognize
     assert result["leads_found"] == 1
     reply = db_session.query(Reply).filter_by(threads_reply_id="r1").one()
     assert reply.kind == "lead"
+    alert_mock.assert_called_once()
 
 
 def test_run_reply_triage_unknown_classifier_label_falls_back_to_spam(db_session, monkeypatch):
