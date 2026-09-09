@@ -43,6 +43,33 @@ def test_check_publishing_limit_raises_when_exhausted(client):
             client.check_publishing_limit()
 
 
+def test_check_publishing_limit_requests_config_fields_explicitly(client):
+    # The Graph API omits config/reply_config/reply_quota_usage unless they're
+    # named in `fields` — confirmed against a live response 2026-09-09.
+    with patch("src.threads.write_client.requests.get") as mock_get:
+        mock_get.return_value = MagicMock(
+            status_code=200,
+            json=lambda: {"data": [{"quota_usage": 1, "config": {"quota_total": 250}}]},
+        )
+        client.check_publishing_limit()
+
+    args, kwargs = mock_get.call_args
+    assert kwargs["params"]["fields"] == "quota_usage,config,reply_quota_usage,reply_config"
+
+
+def test_check_publishing_limit_replies_uses_reply_fields(client):
+    with patch("src.threads.write_client.requests.get") as mock_get:
+        mock_get.return_value = MagicMock(
+            status_code=200,
+            json=lambda: {"data": [{
+                "quota_usage": 1, "config": {"quota_total": 250},
+                "reply_quota_usage": 1000, "reply_config": {"quota_total": 1000},
+            }]},
+        )
+        with pytest.raises(PublishingLimitExceeded):
+            client.check_publishing_limit(kind="replies")
+
+
 def test_backoff_on_429_then_success(client, monkeypatch):
     monkeypatch.setattr("src.threads.write_client.time.sleep", lambda s: None)
     responses = [
