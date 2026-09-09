@@ -1,6 +1,7 @@
 import time
 
 from apscheduler.schedulers.background import BackgroundScheduler
+from openai import RateLimitError
 
 from src.agents.content import ContentAgent
 from src.agents.feed_miner import run_feed_miner
@@ -12,14 +13,26 @@ from src.db.repo import count_scheduled_posts
 
 TIMEZONE = "Asia/Almaty"
 
+CONTENT_AGENT_MAX_ATTEMPTS = 3
+CONTENT_AGENT_RETRY_BACKOFF_SECONDS = 5
+
 
 def run_content_agent_if_queue_low():
     queue_depth = load_settings()["queue_depth"]
     with session_scope() as session:
         scheduled_count = count_scheduled_posts(session)
 
-    if scheduled_count < queue_depth:
-        ContentAgent().run(trigger="queue_low")
+    if scheduled_count >= queue_depth:
+        return
+
+    for attempt in range(1, CONTENT_AGENT_MAX_ATTEMPTS + 1):
+        try:
+            ContentAgent().run(trigger="queue_low")
+            return
+        except RateLimitError:
+            if attempt == CONTENT_AGENT_MAX_ATTEMPTS:
+                raise
+            time.sleep(CONTENT_AGENT_RETRY_BACKOFF_SECONDS * attempt)
 
 
 def build_scheduler() -> BackgroundScheduler:
