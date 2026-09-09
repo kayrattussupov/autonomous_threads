@@ -158,3 +158,67 @@ def test_validate_rejects_top_level_locking_clauses_regression(db_session):
     result = execute_readonly(db_session, "SELECT * FROM posts FOR UPDATE")
     assert "error" in result
     assert "locking" in result["error"].lower()
+
+
+# Fix 1b: execution-time failures must roll back the session so the caller
+# (session_scope()'s subsequent commit()) doesn't get poisoned by a
+# PendingRollbackError instead of the specific error message.
+def test_execute_readonly_execution_error_does_not_poison_session_for_reuse(db_session):
+    result = execute_readonly(db_session, "SELECT nonexistent_column FROM posts")
+    assert "error" in result
+
+    # The same session must still be usable afterward — a leftover
+    # needs-rollback transaction would raise PendingRollbackError here.
+    count = db_session.query(Post).count()
+    assert count == 0
+
+    # A second execute_readonly call on the same session should also succeed.
+    rows = execute_readonly(db_session, "SELECT COUNT(*) as count FROM posts")
+    assert isinstance(rows, list)
+    assert rows and "count" in rows[0]
+
+
+def test_execute_readonly_execution_error_lets_session_scope_commit_succeed():
+    """End-to-end: mirrors how _tool_sql in src/agents/analyst.py actually
+    uses execute_readonly inside session_scope(). Before the Fix 1b rollback,
+    this raised PendingRollbackError from session_scope()'s own commit()."""
+    from src.db.engine import session_scope
+
+    with session_scope() as session:
+        result = execute_readonly(session, "SELECT nonexistent_column FROM posts")
+        assert "error" in result
+    # Reaching here means session_scope()'s session.commit() on exit did not raise.
+
+
+# Fix 3a: date/scalar function whitelist expansion
+def test_validate_allows_date_trunc(db_session):
+    rows = execute_readonly(db_session, "SELECT date_trunc('day', posted_at) AS d FROM posts")
+    assert isinstance(rows, list)
+
+
+def test_validate_allows_now_and_interval_relative_filter(db_session):
+    rows = execute_readonly(
+        db_session, "SELECT * FROM posts WHERE posted_at >= NOW() - INTERVAL '30 days'"
+    )
+    assert isinstance(rows, list)
+
+
+def test_validate_allows_cast(db_session):
+    db_session.add(Post(text="t", category="educational", status="published", score=5))
+    db_session.commit()
+    rows = execute_readonly(db_session, "SELECT CAST(score AS int) AS s FROM posts")
+    assert isinstance(rows, list)
+    assert "error" not in (rows[0] if rows else {})
+
+
+# Fix 5a: explicit LIMIT above the cap is clamped, not passed through
+def test_validate_clamps_explicit_limit_above_cap():
+    safe_sql = _validate("SELECT * FROM posts LIMIT 5000")
+    assert "LIMIT 200" in safe_sql
+    assert "LIMIT 5000" not in safe_sql
+
+
+def test_validate_preserves_explicit_limit_below_cap():
+    safe_sql = _validate("SELECT * FROM posts LIMIT 5")
+    assert safe_sql.count("LIMIT") == 1
+    assert "LIMIT 5" in safe_sql

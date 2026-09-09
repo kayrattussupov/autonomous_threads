@@ -41,7 +41,10 @@ def _validate(query: str) -> str:
         if t.catalog:
             raise UnsafeQueryError(f"catalog-qualified table references are not allowed: {t.sql()}")
 
-    # Whitelist of allowed aggregate functions
+    # Whitelist of allowed aggregate + basic date/scalar functions. Exact class
+    # names verified against this repo's installed sqlglot (26.33.0) by
+    # directly parsing sample queries — note date_trunc(...) parses as
+    # TimestampTrunc, not DateTrunc.
     ALLOWED_FUNCTIONS = (
         exp.Avg,
         exp.Coalesce,
@@ -51,6 +54,14 @@ def _validate(query: str) -> str:
         exp.PercentileCont,
         exp.PercentileDisc,
         exp.Sum,
+        exp.TimestampTrunc,
+        exp.Extract,
+        exp.CurrentTimestamp,
+        exp.Cast,
+        exp.Round,
+        exp.Abs,
+        exp.Length,
+        exp.Lower,
     )
 
     # Validate function calls - only allowed functions permitted
@@ -58,11 +69,27 @@ def _validate(query: str) -> str:
         if not isinstance(func, ALLOWED_FUNCTIONS):
             raise UnsafeQueryError(f"function calls are not allowed: {func.sql()}")
 
-    safe_sql = stmt.sql(dialect="postgres")
-    if stmt.args.get("limit") is None:
+    # Clamp the row limit: any explicit LIMIT above DEFAULT_ROW_LIMIT (or no
+    # LIMIT at all) is capped to DEFAULT_ROW_LIMIT. Limits already at or below
+    # the cap are left untouched.
+    existing_limit = stmt.args.get("limit")
+    limit_value = None
+    if existing_limit is not None:
+        try:
+            limit_value = int(existing_limit.expression.this)
+        except (AttributeError, TypeError, ValueError):
+            limit_value = None
+
+    if existing_limit is None:
+        safe_sql = stmt.sql(dialect="postgres")
         # Append LIMIT as trailing text to preserve ORDER BY semantics
         # (appending keeps LIMIT in the same SELECT scope as ORDER BY)
         safe_sql = f"{safe_sql} LIMIT {DEFAULT_ROW_LIMIT}"
+    elif limit_value is None or limit_value > DEFAULT_ROW_LIMIT:
+        stmt.set("limit", exp.Limit(expression=exp.Literal.number(DEFAULT_ROW_LIMIT)))
+        safe_sql = stmt.sql(dialect="postgres")
+    else:
+        safe_sql = stmt.sql(dialect="postgres")
     return safe_sql
 
 
@@ -73,8 +100,14 @@ def execute_readonly(session: Session, query: str) -> list[dict] | dict:
         return {"error": str(exc)}
 
     try:
+        session.execute(text("SET TRANSACTION READ ONLY"))
         result = session.execute(text(safe_query))
         columns = list(result.keys())
         return [dict(zip(columns, row)) for row in result.fetchall()]
     except Exception as exc:
+        # Execution-time failure (e.g. bad column name) leaves the session's
+        # transaction needing rollback — without this, the caller's next use
+        # of this same session (e.g. session_scope()'s commit()) raises a
+        # generic PendingRollbackError instead of surfacing this message.
+        session.rollback()
         return {"error": str(exc)}
