@@ -5,7 +5,7 @@ import time
 from dataclasses import dataclass
 
 import yaml
-from openai import OpenAI
+from openai import APIConnectionError, APITimeoutError, InternalServerError, OpenAI, RateLimitError
 
 from src.config import load_settings
 from src.db.engine import session_scope
@@ -15,6 +15,14 @@ from src.llm.pricing import cost_usd
 BUDGET_SOFT_STOP_USD = load_settings()["budget"]["soft_stop_usd"]
 BUDGET_HARD_STOP_USD = load_settings()["budget"]["hard_stop_usd"]
 BUDGET_SOFT_STOP_ALLOWED_ROLE = load_settings()["budget"]["soft_stop_allowed_role"]
+
+# Transient errors worth retrying: 429 (the shared Kimi/GLM org-wide rate limits
+# this project has repeatedly hit in production — see run history for the
+# "content" agent), dropped/DNS-failed connections, timeouts, and 5xx.
+# Anything else (bad request, auth, invalid model, ...) fails immediately.
+RETRYABLE_LLM_ERRORS = (RateLimitError, APIConnectionError, APITimeoutError, InternalServerError)
+MAX_LLM_RETRIES = 5
+RETRY_BASE_DELAY_SECONDS = 2.0
 
 
 class BudgetExceeded(Exception):
@@ -55,6 +63,15 @@ class LLMClient:
                 f"only role={BUDGET_SOFT_STOP_ALLOWED_ROLE!r} may still call"
             )
 
+    def _complete_with_retry(self, client: OpenAI, **kwargs):
+        for attempt in range(MAX_LLM_RETRIES + 1):
+            try:
+                return client.chat.completions.create(**kwargs)
+            except RETRYABLE_LLM_ERRORS:
+                if attempt == MAX_LLM_RETRIES:
+                    raise
+                time.sleep(RETRY_BASE_DELAY_SECONDS * (2**attempt))
+
     def complete(
         self,
         role: str,
@@ -72,7 +89,7 @@ class LLMClient:
         prompt_sha = hashlib.sha256(json.dumps(messages, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
         started = time.monotonic()
-        resp = client.chat.completions.create(model=model, messages=messages, max_tokens=max_tokens, extra_body=extra_body)
+        resp = self._complete_with_retry(client, model=model, messages=messages, max_tokens=max_tokens, extra_body=extra_body)
         latency_ms = int((time.monotonic() - started) * 1000)
 
         usage = resp.usage
