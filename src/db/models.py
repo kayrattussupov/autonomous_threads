@@ -182,6 +182,20 @@ class DailySpend(Base):
     cost_usd: Mapped[float | None] = mapped_column(Numeric(10, 6))
 
 
+class TelegramAlert(Base):
+    __tablename__ = "telegram_alerts"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    source: Mapped[str] = mapped_column(Text, nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    success: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    error_detail: Mapped[str | None] = mapped_column(Text)
+    chat_id: Mapped[str | None] = mapped_column(Text)
+    message_id: Mapped[int | None] = mapped_column(BigInteger)
+    retry_count: Mapped[int] = mapped_column(Integer, server_default="1")
+
+
 class DailyLimit(Base):
     __tablename__ = "daily_limits"
 

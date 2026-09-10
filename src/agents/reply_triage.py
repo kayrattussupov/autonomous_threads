@@ -186,7 +186,7 @@ def run_reply_triage(
                             )
                             insert_lead(session, threads_username=author, source_url=source_url, status="scored")
                         leads_found += 1
-                        send_telegram_alert(f"reply_triage: новый лид от @{author} — {text}\n{source_url}")
+                        send_telegram_alert(f"reply_triage: новый лид от @{author} — {text}\n{source_url}", source="reply_triage")
                     else:
                         with session_scope() as session:
                             insert_reply(
@@ -209,7 +209,7 @@ def run_reply_triage(
                 if _is_auth_error(exc):
                     status = "failed"
                     error = str(exc)
-                    send_telegram_alert(f"reply_triage stopped: {exc}")
+                    send_telegram_alert(f"reply_triage stopped: {exc}", source="reply_triage")
 
             with session_scope() as session:
                 add_agent_step(
@@ -227,11 +227,11 @@ def run_reply_triage(
     except BudgetExceeded as exc:
         status = "budget_stop"
         error = str(exc)
-        send_telegram_alert(f"reply_triage stopped (budget exceeded): {exc}")
+        send_telegram_alert(f"reply_triage stopped (budget exceeded): {exc}", source="reply_triage")
     except Exception as exc:  # noqa: BLE001 — recorded, not swallowed silently
         status = "failed"
         error = str(exc)
-        send_telegram_alert(f"reply_triage stopped (unexpected error): {exc}")
+        send_telegram_alert(f"reply_triage stopped (unexpected error): {exc}", source="reply_triage")
 
     with session_scope() as session:
         finish_agent_run(

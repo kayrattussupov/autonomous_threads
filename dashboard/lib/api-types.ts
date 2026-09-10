@@ -82,6 +82,18 @@ export type PlaybookRule = {
   introduced_at: string;
 };
 
+export type TelegramAlert = {
+  id: number;
+  sent_at: string;
+  source: string;
+  text: string;
+  success: boolean;
+  error_detail: string | null;
+  chat_id: string | null;
+  message_id: number | null;
+  retry_count: number;
+};
+
 export type FunnelMonth = {
   month: string;
   posts: number;

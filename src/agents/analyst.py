@@ -107,7 +107,7 @@ def recompute_nightly_metrics(trigger: str = "cron", write_client: ThreadsWriteC
     except Exception as exc:  # noqa: BLE001 — recorded, not swallowed silently
         status = "failed"
         error = str(exc)
-        send_telegram_alert(f"analyst nightly recompute stopped (unexpected error): {exc}")
+        send_telegram_alert(f"analyst nightly recompute stopped (unexpected error): {exc}", source="analyst")
 
     with session_scope() as session:
         finish_agent_run(
@@ -240,9 +240,9 @@ class AnalystAgent(ReActAgent):
         self._done = True
         if self._proposals:
             body = "\n".join(f"- {p}" for p in self._proposals)
-            send_telegram_alert(f"analyst_agent: месячный отчёт готов, ждёт апрува в дашборде.\n{summary}\n{body}")
+            send_telegram_alert(f"analyst_agent: месячный отчёт готов, ждёт апрува в дашборде.\n{summary}\n{body}", source="analyst")
         else:
-            send_telegram_alert(f"analyst_agent: месячный отчёт готов, новых предложений нет.\n{summary}")
+            send_telegram_alert(f"analyst_agent: месячный отчёт готов, новых предложений нет.\n{summary}", source="analyst")
         return {"status": "done"}
 
     def decide_next_action(self, history: list[dict]) -> dict | None:

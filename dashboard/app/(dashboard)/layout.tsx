@@ -24,6 +24,7 @@ export default async function DashboardLayout({ children }: { children: ReactNod
           <Link href="/agents">Агенты</Link>
           <Link href="/styles">Стили</Link>
           <Link href="/playbook">Playbook</Link>
+          <Link href="/telegram">Telegram</Link>
         </nav>
         <div>
           Расход: ${spend.month_to_date_usd.toFixed(2)} / ${spend.cap_usd.toFixed(2)}

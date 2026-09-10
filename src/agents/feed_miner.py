@@ -111,7 +111,7 @@ def run_feed_miner(
                     tool_result = str(exc)
                     status = "failed"
                     error = str(exc)
-                    send_telegram_alert(f"feed_miner stopped: {exc}")
+                    send_telegram_alert(f"feed_miner stopped: {exc}", source="feed_miner")
 
                 with session_scope() as session:
                     add_agent_step(
@@ -129,11 +129,11 @@ def run_feed_miner(
     except BudgetExceeded as exc:
         status = "budget_stop"
         error = str(exc)
-        send_telegram_alert(f"feed_miner stopped (budget exceeded): {exc}")
+        send_telegram_alert(f"feed_miner stopped (budget exceeded): {exc}", source="feed_miner")
     except Exception as exc:  # noqa: BLE001 — recorded, not swallowed silently
         status = "failed"
         error = str(exc)
-        send_telegram_alert(f"feed_miner stopped (unexpected error): {exc}")
+        send_telegram_alert(f"feed_miner stopped (unexpected error): {exc}", source="feed_miner")
 
     with session_scope() as session:
         finish_agent_run(

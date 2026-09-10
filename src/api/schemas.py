@@ -97,6 +97,20 @@ class PlaybookRuleOut(BaseModel):
     introduced_at: datetime
 
 
+class TelegramAlertOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    sent_at: datetime
+    source: str
+    text: str
+    success: bool
+    error_detail: str | None
+    chat_id: str | None
+    message_id: int | None
+    retry_count: int
+
+
 class FunnelMonthOut(BaseModel):
     month: str
     posts: int

@@ -83,7 +83,7 @@ def publish_scheduled_posts(trigger: str = "cron", write_client: ThreadsWriteCli
                 # temporary daily-quota condition, not a permanent failure, and
                 # Block 4's dashboard reads `status` as real signal — a post
                 # that was never even attempted is not a "failed" post.
-                send_telegram_alert(f"content_publisher: остановлен — {exc}")
+                send_telegram_alert(f"content_publisher: остановлен — {exc}", source="publisher")
                 with session_scope() as session:
                     add_agent_step(session, run_id=run_id, step_no=step_no, tool_name="publish_text_post", tool_args={"post_id": post_id}, tool_result=tool_result, tool_ok=tool_ok)
                 break
@@ -94,20 +94,21 @@ def publish_scheduled_posts(trigger: str = "cron", write_client: ThreadsWriteCli
                     post = session.get(Post, post_id)
                     post.status = "failed"
                 failed += 1
-                send_telegram_alert(f"content_publisher: публикация не удалась (post_id={post_id}): {exc}")
+                send_telegram_alert(f"content_publisher: публикация не удалась (post_id={post_id}): {exc}", source="publisher")
 
             with session_scope() as session:
                 add_agent_step(session, run_id=run_id, step_no=step_no, tool_name="publish_text_post", tool_args={"post_id": post_id}, tool_result=tool_result, tool_ok=tool_ok)
     except Exception as exc:  # noqa: BLE001
         status = "failed"
         error = str(exc)
-        send_telegram_alert(f"content_publisher: остановлен (неожиданная ошибка): {exc}")
+        send_telegram_alert(f"content_publisher: остановлен (неожиданная ошибка): {exc}", source="publisher")
 
     if blocked:
         send_telegram_alert(
             f"content_publisher: реальная публикация заблокирована — активный style_variant "
             f"это placeholder (v1_placeholder), заблокировано постов: {blocked}. "
-            f"Замените genome перед реальной публикацией, или установите ALLOW_PLACEHOLDER_GENOME=1."
+            f"Замените genome перед реальной публикацией, или установите ALLOW_PLACEHOLDER_GENOME=1.",
+            source="publisher",
         )
 
     with session_scope() as session:

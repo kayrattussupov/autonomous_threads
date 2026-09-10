@@ -162,7 +162,8 @@ class ContentAgent(ReActAgent):
         if self._critic_failures >= 2:
             self._persist_post(text, category, status="needs_review", source_url=source_url)
             send_telegram_alert(
-                f"content_agent: пост требует ручной проверки — style_critic дважды отклонил черновик: {critique['issues']}"
+                f"content_agent: пост требует ручной проверки — style_critic дважды отклонил черновик: {critique['issues']}",
+                source="content",
             )
             self._done = True
             return {"status": "needs_review", "issues": critique["issues"]}

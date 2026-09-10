@@ -16,6 +16,7 @@ from src.db.models import (
     Reply,
     StyleVariant,
     SwipeFilePost,
+    TelegramAlert,
 )
 
 
@@ -154,6 +155,18 @@ def median_post_score(
         stmt = stmt.where(Post.status == status)
     result = session.execute(stmt).scalar_one_or_none()
     return float(result) if result is not None else None
+
+
+def save_telegram_alert(session: Session, **fields) -> TelegramAlert:
+    alert = TelegramAlert(**fields)
+    session.add(alert)
+    session.flush()
+    return alert
+
+
+def list_telegram_alerts(session: Session, limit: int = 50) -> list[TelegramAlert]:
+    stmt = select(TelegramAlert).order_by(TelegramAlert.sent_at.desc()).limit(limit)
+    return list(session.execute(stmt).scalars().all())
 
 
 def list_agent_runs(session: Session, limit: int = 50) -> list[AgentRun]:

@@ -7,6 +7,7 @@ import type {
   PostsPage,
   Spend,
   StyleVariant,
+  TelegramAlert,
 } from "./api-types";
 
 export class ApiError extends Error {
@@ -98,6 +99,10 @@ export function getSpend(): Promise<Spend> {
   return apiFetch<Spend>("/spend");
 }
 
+export function getTelegramAlerts(limit = 50): Promise<TelegramAlert[]> {
+  return apiFetch<TelegramAlert[]>(`/telegram-alerts?limit=${limit}`);
+}
+
 export type {
   AgentRun,
   AgentStep,
@@ -107,4 +112,5 @@ export type {
   PostsPage,
   Spend,
   StyleVariant,
+  TelegramAlert,
 };
