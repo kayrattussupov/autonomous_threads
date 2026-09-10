@@ -68,6 +68,30 @@ def test_recompute_nightly_metrics_skips_post_on_local_api_failure_and_continues
     assert result["refresh_failures"] == 1
 
 
+def test_recompute_nightly_metrics_skips_post_on_non_api_error_and_continues(db_session, monkeypatch):
+    # write_client._request() funnels HTTP failures into ThreadsAPIError, but
+    # network errors, malformed JSON bodies, or a post row that vanished
+    # between the query and this iteration raise other exception types —
+    # those must be treated as per-post failures too, not escape to the
+    # outer handler and abort every remaining post that night.
+    monkeypatch.setattr("src.agents.analyst.load_settings", lambda: {"metrics_refresh_window_days": 90})
+    now = datetime.now(timezone.utc)
+    insert_post(db_session, text="fails", category="educational", status="published", threads_media_id="bad", posted_at=now - timedelta(days=1))
+    insert_post(db_session, text="ok", category="educational", status="published", threads_media_id="good", posted_at=now - timedelta(days=1))
+    db_session.commit()
+
+    write_client = _FakeWriteClient({
+        "bad": ConnectionError("network blip"),
+        "good": {"views": 10, "likes": 0, "replies": 0, "quotes": 0, "reposts": 0, "shares": 0},
+    })
+
+    result = recompute_nightly_metrics(trigger="manual", write_client=write_client)
+
+    assert result["status"] == "ok"
+    assert result["refreshed"] == 1
+    assert result["refresh_failures"] == 1
+
+
 def test_recompute_nightly_metrics_ignores_posts_outside_refresh_window(db_session, monkeypatch):
     monkeypatch.setattr("src.agents.analyst.load_settings", lambda: {"metrics_refresh_window_days": 90})
     now = datetime.now(timezone.utc)
@@ -235,6 +259,31 @@ def test_analyst_tool_selection_prompt_includes_today_and_sql_constraints():
     assert today in prompt
     assert "LIMIT" in prompt
     assert "{today}" not in ANALYST_TOOL_SELECTION_PROMPT.replace("{today}", today)
+
+
+def test_decide_next_action_does_not_corrupt_history_containing_literal_today_placeholder():
+    # {today} must be substituted into the plain template BEFORE history is
+    # spliced in — otherwise a second .replace("{today}", ...) pass over the
+    # already-spliced string would also rewrite any literal "{today}"
+    # occurring inside history data (e.g. scraped swipe_file/sql() tool
+    # output), silently corrupting evidence the LLM is shown.
+    rendered_prompts = []
+
+    class _CapturingLLMClient:
+        def complete(self, role, messages, run_id=None, step_no=None):
+            rendered_prompts.append(messages[-1]["content"])
+            return LLMResponse(
+                text=_tool_call_json("finish", {"summary": "done"}),
+                tokens_in=1, tokens_out=1, cost_usd=0.0, model="kimi-k2.6", finish_reason="stop",
+            )
+
+    agent = AnalystAgent(llm_client=_CapturingLLMClient())
+    poisoned_history = [{"tool_name": "sql", "tool_result": "raw scraped text mentioning {today} literally"}]
+
+    agent.decide_next_action(poisoned_history)
+    prompt = rendered_prompts[-1]
+
+    assert "raw scraped text mentioning {today} literally" in prompt
 
 
 def test_analyst_agent_finish_without_proposals_alerts_no_proposals(db_session, monkeypatch):

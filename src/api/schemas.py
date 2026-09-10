@@ -61,7 +61,7 @@ class AgentStepOut(BaseModel):
     thought: str | None
     tool_name: str | None
     tool_args: dict | None
-    tool_result: dict | None
+    tool_result: dict | list | None
     tool_ok: bool | None
     tool_ms: int | None
     created_at: datetime

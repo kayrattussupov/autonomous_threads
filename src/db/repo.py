@@ -227,6 +227,10 @@ def _evict_weakest_active_rule(session: Session) -> None:
         return (metric, rule.introduced_at)
 
     weakest = min(active, key=_rank)
+    if (weakest.evidence_n or 0) < 20:
+        raise RetirementBlocked(
+            f"cannot evict playbook_rule {weakest.id}: evidence_n={weakest.evidence_n or 0} < 20"
+        )
     weakest.status = "rejected"
 
 
@@ -264,6 +268,14 @@ def reject_playbook_rule(session: Session, rule_id: int) -> PlaybookRule:
     if rule.status == "proposed":
         rule.status = "rejected"
     elif rule.status == "proposed_removal":
+        # Reverting a removal makes this rule active again — re-run the same
+        # pre-emptive ceiling check approve_playbook_rule uses (evict the
+        # current weakest active rule, if any, before this one rejoins the
+        # active set), otherwise the ceiling is silently breachable: propose
+        # removal (drops out of the active count) -> approve an unrelated
+        # rule while under ceiling -> reject this removal -> active count
+        # exceeds PLAYBOOK_RULE_CEILING with no guard.
+        _evict_weakest_active_rule(session)
         rule.status = _reverted_status(rule)
     else:
         raise InvalidStateTransition(
@@ -488,11 +500,7 @@ def recompute_all_post_scores(session: Session) -> int:
 def recompute_style_variant_medians(session: Session) -> None:
     variants = session.execute(select(StyleVariant)).scalars().all()
     for variant in variants:
-        median = session.execute(
-            select(func.percentile_cont(0.5).within_group(Post.score))
-            .where(Post.style_variant_id == variant.id, Post.status == "published", Post.score.isnot(None))
-        ).scalar_one_or_none()
-        variant.median_score = median
+        variant.median_score = median_post_score(session, style_variant_id=variant.id, status="published")
 
 
 def recompute_playbook_evidence(session: Session) -> list[PlaybookRule]:

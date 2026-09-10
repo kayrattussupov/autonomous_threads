@@ -43,10 +43,17 @@ def _validate(query: str) -> str:
     if not isinstance(stmt, exp.Select):
         raise UnsafeQueryError("only SELECT statements are allowed")
 
-    # Check for locking clauses (FOR UPDATE/FOR SHARE) in all nested SELECT statements
+    # Check for locking clauses (FOR UPDATE/FOR SHARE) and CTEs in all nested
+    # SELECT statements. sqlglot parses `WITH ... SELECT ...` as an exp.Select
+    # carrying a "with" arg rather than a distinct node type, so the
+    # isinstance check above does not reject it on its own — and a CTE
+    # aliased to a whitelisted table name (e.g. "posts") would otherwise pass
+    # the table whitelist below via its own alias.
     for select_node in stmt.find_all(exp.Select):
         if select_node.args.get("locks"):
             raise UnsafeQueryError("locking clauses (FOR UPDATE/FOR SHARE) are not allowed")
+        if select_node.args.get("with"):
+            raise UnsafeQueryError("CTEs (WITH clauses) are not allowed")
 
     # Validate table names and schemas
     for t in stmt.find_all(exp.Table):

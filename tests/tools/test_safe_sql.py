@@ -164,6 +164,29 @@ def test_validate_rejects_top_level_locking_clauses_regression(db_session):
     assert "locking" in result["error"].lower()
 
 
+# Fix 6: sqlglot parses `WITH ... SELECT ...` as an exp.Select too, so the
+# isinstance(stmt, exp.Select) check alone did not reject CTEs, and a CTE
+# aliased to a whitelisted table name (e.g. "posts") slipped past the table
+# whitelist via its own alias — contradicting SPEC.md §6.5's explicit
+# "только SELECT (без CTE и UNION)".
+def test_validate_rejects_ctes():
+    with pytest.raises(UnsafeQueryError, match="CTE"):
+        _validate("WITH x AS (SELECT id FROM posts) SELECT * FROM x")
+
+
+def test_execute_readonly_rejects_cte_shadowing_a_whitelisted_table(db_session):
+    result = execute_readonly(
+        db_session, "WITH posts AS (SELECT id, text FROM leads) SELECT * FROM posts"
+    )
+    assert "error" in result
+    assert "cte" in result["error"].lower()
+
+
+def test_validate_rejects_ctes_nested_in_a_subquery():
+    with pytest.raises(UnsafeQueryError, match="CTE"):
+        _validate("SELECT * FROM (WITH x AS (SELECT id FROM posts) SELECT * FROM x) sub")
+
+
 # Fix 1b: execution-time failures must roll back the session so the caller
 # (session_scope()'s subsequent commit()) doesn't get poisoned by a
 # PendingRollbackError instead of the specific error message.

@@ -18,6 +18,16 @@ CONTENT_AGENT_MAX_ATTEMPTS = 3
 CONTENT_AGENT_RETRY_BACKOFF_SECONDS = 5
 
 
+def _run_with_rate_limit_retry(fn, *, max_attempts=CONTENT_AGENT_MAX_ATTEMPTS, backoff_seconds=CONTENT_AGENT_RETRY_BACKOFF_SECONDS):
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return fn()
+        except RateLimitError:
+            if attempt == max_attempts:
+                raise
+            time.sleep(backoff_seconds * attempt)
+
+
 def run_content_agent_if_queue_low():
     queue_depth = load_settings()["queue_depth"]
     with session_scope() as session:
@@ -26,18 +36,15 @@ def run_content_agent_if_queue_low():
     if scheduled_count >= queue_depth:
         return
 
-    for attempt in range(1, CONTENT_AGENT_MAX_ATTEMPTS + 1):
-        try:
-            ContentAgent().run(trigger="queue_low")
-            return
-        except RateLimitError:
-            if attempt == CONTENT_AGENT_MAX_ATTEMPTS:
-                raise
-            time.sleep(CONTENT_AGENT_RETRY_BACKOFF_SECONDS * attempt)
+    _run_with_rate_limit_retry(lambda: ContentAgent().run(trigger="queue_low"))
 
 
 def run_analyst_agent_monthly():
-    AnalystAgent().run(trigger="cron")
+    # AnalystAgent runs only once a month (see build_scheduler below) — losing
+    # a run to a transient RateLimitError with no retry would mean no analyst
+    # proposals for an entire month, so this gets the same retry treatment as
+    # run_content_agent_if_queue_low above.
+    _run_with_rate_limit_retry(lambda: AnalystAgent().run(trigger="cron"))
 
 
 def build_scheduler() -> BackgroundScheduler:

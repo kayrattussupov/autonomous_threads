@@ -155,3 +155,34 @@ def test_run_analyst_agent_monthly_invokes_agent_with_cron_trigger(monkeypatch):
 
     agent_class.assert_called_once_with()
     agent_instance.run.assert_called_once_with(trigger="cron")
+
+
+def test_run_analyst_agent_monthly_retries_on_rate_limit_then_succeeds(monkeypatch):
+    # AnalystAgent only runs once a month — losing a run to a transient
+    # RateLimitError with no retry (unlike run_content_agent_if_queue_low)
+    # meant no analyst proposals for an entire month with no automatic
+    # makeup run.
+    monkeypatch.setattr("src.scheduler.time.sleep", lambda _seconds: None)
+
+    agent_instance = MagicMock()
+    agent_instance.run.side_effect = [_rate_limit_error(), _rate_limit_error(), MagicMock()]
+    agent_class = MagicMock(return_value=agent_instance)
+    monkeypatch.setattr("src.scheduler.AnalystAgent", agent_class)
+
+    run_analyst_agent_monthly()
+
+    assert agent_instance.run.call_count == 3
+
+
+def test_run_analyst_agent_monthly_raises_after_exhausting_retries(monkeypatch):
+    monkeypatch.setattr("src.scheduler.time.sleep", lambda _seconds: None)
+
+    agent_instance = MagicMock()
+    agent_instance.run.side_effect = _rate_limit_error()
+    agent_class = MagicMock(return_value=agent_instance)
+    monkeypatch.setattr("src.scheduler.AnalystAgent", agent_class)
+
+    with pytest.raises(RateLimitError):
+        run_analyst_agent_monthly()
+
+    assert agent_instance.run.call_count == 3

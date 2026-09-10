@@ -1,8 +1,21 @@
 from unittest.mock import MagicMock, patch
 
+import pytest
 import requests
 
 from src.tools.web_search import verify_source, web_search
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _create_schema():
+    """Override the root conftest's session-scoped, real-Postgres-backed
+    fixture of the same name for this module only — these tests only mock
+    `requests` and never touch a database. A directory-level tests/tools/
+    conftest.py can't do this override any more because test_safe_sql.py in
+    the same directory genuinely needs the real schema fixture; overriding
+    at module scope here keeps both files' needs satisfied without a
+    directory-wide conftest.py (see git history of tests/tools/conftest.py)."""
+    yield
 
 
 def test_web_search_returns_title_url_content(monkeypatch):

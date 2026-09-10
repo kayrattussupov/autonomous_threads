@@ -22,7 +22,7 @@ from src.db.repo import (
 )
 from src.llm.client import LLMClient
 from src.llm.json_extract import extract_json
-from src.threads.write_client import ThreadsAPIError, ThreadsWriteClient
+from src.threads.write_client import ThreadsWriteClient
 from src.tools.safe_sql import execute_readonly
 
 
@@ -70,11 +70,18 @@ def recompute_nightly_metrics(trigger: str = "cron", write_client: ThreadsWriteC
                     post.metrics_updated_at = datetime.now(timezone.utc)
                 tool_result = {"post_id": post_id, "insights": insights}
                 refreshed += 1
-            except ThreadsAPIError as exc:
+            except Exception as exc:
                 # No systemic-vs-per-post distinction is available from
                 # ThreadsAPIError alone (write_client's _request() already
-                # exhausts its own 429 backoff before raising) — always skip
-                # and continue, never abort the whole nightly run.
+                # exhausts its own 429 backoff before raising, and even an
+                # auth/permission failure surfaces as the same generic
+                # ThreadsAPIError) — so this always skips and continues,
+                # never aborts the whole nightly run. Caught broadly (not
+                # just ThreadsAPIError) because network errors, malformed
+                # JSON bodies, or a post deleted between the query above and
+                # this iteration are per-post failures too, not run-ending
+                # ones — narrower catches here previously let those escape
+                # to the outer handler and abort every remaining post.
                 tool_ok = False
                 tool_result = str(exc)
                 refresh_failures += 1
@@ -244,7 +251,12 @@ class AnalystAgent(ReActAgent):
 
         history_json = json.dumps(history, ensure_ascii=False, default=str)
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        prompt = ANALYST_TOOL_SELECTION_PROMPT.replace("{history}", history_json).replace("{today}", today)
+        # {today} substituted first, into the plain template only — history
+        # (which can carry raw external swipe_file/sql() text, per the
+        # injection-defense note below) must go in LAST, so a literal
+        # "{today}" occurring inside that data is never rescanned and
+        # rewritten by a subsequent .replace() call.
+        prompt = ANALYST_TOOL_SELECTION_PROMPT.replace("{today}", today).replace("{history}", history_json)
         messages = [
             {"role": "system", "content": self.system_prompt()},
             {"role": "user", "content": prompt},
