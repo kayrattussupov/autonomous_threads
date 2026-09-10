@@ -1,17 +1,7 @@
 from unittest.mock import MagicMock
 
-import httpx
-import pytest
-from openai import RateLimitError
-
 from src.db.repo import insert_post
 from src.scheduler import build_scheduler, run_content_agent_if_queue_low, run_analyst_agent_monthly
-
-
-def _rate_limit_error() -> RateLimitError:
-    request = httpx.Request("POST", "https://api.example.com/v1/chat/completions")
-    response = httpx.Response(429, request=request, json={"error": {"message": "rate limited"}})
-    return RateLimitError("rate limited", response=response, body=None)
 
 
 def test_build_scheduler_registers_two_daily_feed_miner_jobs():
@@ -71,41 +61,6 @@ def test_run_content_agent_if_queue_low_skips_agent_when_scheduled_count_at_or_a
     agent_instance.run.assert_not_called()
 
 
-def test_run_content_agent_if_queue_low_retries_on_rate_limit_then_succeeds(db_session, monkeypatch):
-    monkeypatch.setattr("src.scheduler.load_settings", lambda: {"queue_depth": 5})
-    monkeypatch.setattr("src.scheduler.time.sleep", lambda _seconds: None)
-    for i in range(3):
-        insert_post(db_session, text=f"scheduled {i}", category="educational", status="scheduled")
-    db_session.commit()
-
-    agent_instance = MagicMock()
-    agent_instance.run.side_effect = [_rate_limit_error(), _rate_limit_error(), MagicMock()]
-    agent_class = MagicMock(return_value=agent_instance)
-    monkeypatch.setattr("src.scheduler.ContentAgent", agent_class)
-
-    run_content_agent_if_queue_low()
-
-    assert agent_instance.run.call_count == 3
-
-
-def test_run_content_agent_if_queue_low_raises_after_exhausting_retries(db_session, monkeypatch):
-    monkeypatch.setattr("src.scheduler.load_settings", lambda: {"queue_depth": 5})
-    monkeypatch.setattr("src.scheduler.time.sleep", lambda _seconds: None)
-    for i in range(3):
-        insert_post(db_session, text=f"scheduled {i}", category="educational", status="scheduled")
-    db_session.commit()
-
-    agent_instance = MagicMock()
-    agent_instance.run.side_effect = _rate_limit_error()
-    agent_class = MagicMock(return_value=agent_instance)
-    monkeypatch.setattr("src.scheduler.ContentAgent", agent_class)
-
-    with pytest.raises(RateLimitError):
-        run_content_agent_if_queue_low()
-
-    assert agent_instance.run.call_count == 3
-
-
 def test_build_scheduler_registers_reply_triage_job():
     scheduler = build_scheduler()
     jobs = {j.id: j for j in scheduler.get_jobs()}
@@ -155,34 +110,3 @@ def test_run_analyst_agent_monthly_invokes_agent_with_cron_trigger(monkeypatch):
 
     agent_class.assert_called_once_with()
     agent_instance.run.assert_called_once_with(trigger="cron")
-
-
-def test_run_analyst_agent_monthly_retries_on_rate_limit_then_succeeds(monkeypatch):
-    # AnalystAgent only runs once a month — losing a run to a transient
-    # RateLimitError with no retry (unlike run_content_agent_if_queue_low)
-    # meant no analyst proposals for an entire month with no automatic
-    # makeup run.
-    monkeypatch.setattr("src.scheduler.time.sleep", lambda _seconds: None)
-
-    agent_instance = MagicMock()
-    agent_instance.run.side_effect = [_rate_limit_error(), _rate_limit_error(), MagicMock()]
-    agent_class = MagicMock(return_value=agent_instance)
-    monkeypatch.setattr("src.scheduler.AnalystAgent", agent_class)
-
-    run_analyst_agent_monthly()
-
-    assert agent_instance.run.call_count == 3
-
-
-def test_run_analyst_agent_monthly_raises_after_exhausting_retries(monkeypatch):
-    monkeypatch.setattr("src.scheduler.time.sleep", lambda _seconds: None)
-
-    agent_instance = MagicMock()
-    agent_instance.run.side_effect = _rate_limit_error()
-    agent_class = MagicMock(return_value=agent_instance)
-    monkeypatch.setattr("src.scheduler.AnalystAgent", agent_class)
-
-    with pytest.raises(RateLimitError):
-        run_analyst_agent_monthly()
-
-    assert agent_instance.run.call_count == 3

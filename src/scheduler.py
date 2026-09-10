@@ -1,7 +1,6 @@
 import time
 
 from apscheduler.schedulers.background import BackgroundScheduler
-from openai import RateLimitError
 
 from src.agents.analyst import AnalystAgent, recompute_nightly_metrics
 from src.agents.content import ContentAgent
@@ -14,19 +13,6 @@ from src.db.repo import count_scheduled_posts
 
 TIMEZONE = "Asia/Almaty"
 
-CONTENT_AGENT_MAX_ATTEMPTS = 3
-CONTENT_AGENT_RETRY_BACKOFF_SECONDS = 5
-
-
-def _run_with_rate_limit_retry(fn, *, max_attempts=CONTENT_AGENT_MAX_ATTEMPTS, backoff_seconds=CONTENT_AGENT_RETRY_BACKOFF_SECONDS):
-    for attempt in range(1, max_attempts + 1):
-        try:
-            return fn()
-        except RateLimitError:
-            if attempt == max_attempts:
-                raise
-            time.sleep(backoff_seconds * attempt)
-
 
 def run_content_agent_if_queue_low():
     queue_depth = load_settings()["queue_depth"]
@@ -36,15 +22,11 @@ def run_content_agent_if_queue_low():
     if scheduled_count >= queue_depth:
         return
 
-    _run_with_rate_limit_retry(lambda: ContentAgent().run(trigger="queue_low"))
+    ContentAgent().run(trigger="queue_low")
 
 
 def run_analyst_agent_monthly():
-    # AnalystAgent runs only once a month (see build_scheduler below) — losing
-    # a run to a transient RateLimitError with no retry would mean no analyst
-    # proposals for an entire month, so this gets the same retry treatment as
-    # run_content_agent_if_queue_low above.
-    _run_with_rate_limit_retry(lambda: AnalystAgent().run(trigger="cron"))
+    AnalystAgent().run(trigger="cron")
 
 
 def build_scheduler() -> BackgroundScheduler:
