@@ -40,6 +40,12 @@ export function RunRow({ run }: { run: AgentRun }) {
         <tr>
           <td colSpan={8}>
             {loading && <p>Загрузка...</p>}
+            {!loading && run.error && (
+              <p style={{ color: "crimson", padding: 8, border: "1px solid crimson", whiteSpace: "pre-wrap" }}>
+                {run.error}
+              </p>
+            )}
+            {!loading && !run.error && steps?.length === 0 && <p>Нет шагов.</p>}
             {steps?.map((step) => (
               <div key={step.id} style={{ borderTop: "1px solid #e0e0e0", padding: 8 }}>
                 <strong>
