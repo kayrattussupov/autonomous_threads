@@ -54,6 +54,25 @@ Autonomous Threads-posting agent. See `SPEC.md` for the full design.
    python -m alembic upgrade head
    ```
 
+   > **Gotcha:** if that host-side command targets the *same* Postgres the
+   > `worker`/`api` containers use, it stamps the database to a revision your
+   > running containers' baked-in image may not have yet (`build: .` copies
+   > code in at image-build time, not at container-start time — there's no
+   > live source mount). The containers then crash-loop forever on `alembic
+   > upgrade head` with `Can't locate revision identified by '<rev>'`. `scripts/boot.sh`
+   > (the container entrypoint, wraps this migration step for both services)
+   > sends one Telegram alert per crash episode so this doesn't sit silent
+   > under `restart: unless-stopped`, but it's still dead until rebuilt. After
+   > running migrations from the host against the shared dev DB, always follow
+   > up with:
+   >
+   > ```
+   > docker compose up -d --build worker api
+   > ```
+   >
+   > When in doubt, skip the host-side step entirely and let the containers
+   > apply the migration themselves via `docker compose up -d --build`.
+
 4. **Browser-based Threads login (`src/threads/browser`)**
 
    `ThreadsReadClient` / `feed_miner` read the public feed via a headless-Chrome
