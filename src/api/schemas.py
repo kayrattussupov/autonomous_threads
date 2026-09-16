@@ -9,6 +9,7 @@ class PostOut(BaseModel):
     id: int
     text: str
     category: str
+    sector: str | None
     status: str
     source_url: str | None
     style_variant_id: int | None
@@ -33,6 +34,18 @@ class PostsPageOut(BaseModel):
     page: int
     page_size: int
     median_score: float | None
+
+
+class SectorOut(BaseModel):
+    name: str
+    source: str
+    active: bool
+    published_n: int
+    mean_score: float | None
+    median_score: float | None
+    last_post_at: datetime | None
+    weight: float | None
+    probability: float | None
 
 
 class AgentRunOut(BaseModel):
