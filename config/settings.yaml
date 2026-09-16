@@ -36,3 +36,24 @@ post_length:
 search:
   provider: tavily
   max_results: 5
+topic_planner:
+  seed_sectors:
+    - производство
+    - розничная торговля
+    - логистика и доставка
+    - клиники и медицина
+    - HoReCa
+    - недвижимость
+    - услуги и сервис
+    - онлайн-школы
+    - строительство
+    - e-commerce
+  category_mix:
+    utp_cta: 0.5
+    educational: 0.3
+    personal: 0.1
+    news: 0.1
+  window_posts: 12
+  max_sector_share: 0.5
+  prior_strength: 3
+  new_sector_prob: 0.1

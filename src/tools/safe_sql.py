@@ -6,7 +6,7 @@ from sqlglot import exp
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-ALLOWED_TABLES = {"posts", "swipe_file", "style_variants", "playbook_rules", "replies", "leads"}
+ALLOWED_TABLES = {"posts", "swipe_file", "style_variants", "playbook_rules", "replies", "leads", "sectors"}
 DEFAULT_ROW_LIMIT = 200
 
 

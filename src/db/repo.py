@@ -14,6 +14,7 @@ from src.db.models import (
     PlaybookRule,
     Post,
     Reply,
+    Sector,
     StyleVariant,
     SwipeFilePost,
     TelegramAlert,
@@ -116,6 +117,7 @@ def list_posts(
     style_variant_id: int | None = None,
     model_used: str | None = None,
     status: str | None = None,
+    sector: str | None = None,
     page: int = 1,
     page_size: int = 25,
 ) -> tuple[list[Post], int]:
@@ -128,6 +130,8 @@ def list_posts(
         stmt = stmt.where(Post.model_used == model_used)
     if status is not None:
         stmt = stmt.where(Post.status == status)
+    if sector is not None:
+        stmt = stmt.where(Post.sector == sector)
 
     total = session.execute(select(func.count()).select_from(stmt.subquery())).scalar_one()
     items = session.execute(
@@ -143,6 +147,7 @@ def median_post_score(
     style_variant_id: int | None = None,
     model_used: str | None = None,
     status: str | None = None,
+    sector: str | None = None,
 ) -> float | None:
     stmt = select(func.percentile_cont(0.5).within_group(Post.score))
     if category is not None:
@@ -153,6 +158,8 @@ def median_post_score(
         stmt = stmt.where(Post.model_used == model_used)
     if status is not None:
         stmt = stmt.where(Post.status == status)
+    if sector is not None:
+        stmt = stmt.where(Post.sector == sector)
     result = session.execute(stmt).scalar_one_or_none()
     return float(result) if result is not None else None
 
@@ -411,13 +418,11 @@ def get_recent_posts(session: Session, n: int = 30) -> list[Post]:
     ).scalars().all())
 
 
-def get_top_performers(session: Session, n: int = 5) -> list[Post]:
-    return list(session.execute(
-        select(Post)
-        .where(Post.status == "published", Post.score.isnot(None))
-        .order_by(Post.score.desc())
-        .limit(n)
-    ).scalars().all())
+def get_top_performers(session: Session, n: int = 5, sector: str | None = None) -> list[Post]:
+    stmt = select(Post).where(Post.status == "published", Post.score.isnot(None))
+    if sector is not None:
+        stmt = stmt.where(Post.sector == sector)
+    return list(session.execute(stmt.order_by(Post.score.desc()).limit(n)).scalars().all())
 
 
 def get_swipe_examples(session: Session, n: int = 8, topic: str | None = None) -> list[SwipeFilePost]:
@@ -624,3 +629,56 @@ def get_swipe_stats(session: Session, days: int = 30) -> list[dict]:
         }
         for r in rows
     ]
+
+
+PLANNER_WINDOW_STATUSES = ("scheduled", "published", "needs_review")
+
+
+def get_or_create_sector(session: Session, name: str, source: str) -> tuple[Sector, bool]:
+    existing = session.execute(select(Sector).where(Sector.name == name)).scalar_one_or_none()
+    if existing is not None:
+        return existing, False
+    sector = Sector(name=name, source=source)
+    session.add(sector)
+    session.flush()
+    return sector, True
+
+
+def get_active_sector_names(session: Session) -> list[str]:
+    return list(session.execute(
+        select(Sector.name).where(Sector.active.is_(True)).order_by(Sector.id)
+    ).scalars().all())
+
+
+def list_sectors(session: Session) -> list[Sector]:
+    return list(session.execute(select(Sector).order_by(Sector.id)).scalars().all())
+
+
+def get_planner_window(session: Session, n: int) -> list[tuple[str | None, str]]:
+    rows = session.execute(
+        select(Post.sector, Post.category)
+        .where(Post.status.in_(PLANNER_WINDOW_STATUSES))
+        .order_by(Post.created_at.desc(), Post.id.desc())
+        .limit(n)
+    ).all()
+    return [(row.sector, row.category) for row in rows]
+
+
+def get_published_scores(session: Session) -> list[tuple[str | None, float]]:
+    rows = session.execute(
+        select(Post.sector, Post.score).where(Post.status == "published", Post.score.isnot(None))
+    ).all()
+    return [(row.sector, float(row.score)) for row in rows]
+
+
+def get_last_post_at_by_sector(session: Session) -> dict[str, datetime]:
+    rows = session.execute(
+        select(Post.sector, func.max(Post.created_at))
+        .where(Post.sector.isnot(None))
+        .group_by(Post.sector)
+    ).all()
+    return {sector: last for sector, last in rows}
+
+
+def set_agent_run_output_ref(session: Session, run_id: int, output_ref: str) -> None:
+    session.get(AgentRun, run_id).output_ref = output_ref
