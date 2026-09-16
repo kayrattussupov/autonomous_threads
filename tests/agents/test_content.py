@@ -2,7 +2,8 @@ import json
 from unittest.mock import MagicMock
 
 from src.agents.content import ContentAgent
-from src.db.models import AgentRun, Post, StyleVariant
+from src.content.topic_planner import Assignment
+from src.db.models import AgentRun, Post, Sector, StyleVariant
 from src.llm.client import LLMResponse
 
 
@@ -11,9 +12,11 @@ class _ScriptedLLMClient:
     def __init__(self, script: list[str]):
         self._script = list(script)
         self.calls = []
+        self.messages = []
 
     def complete(self, role, messages, run_id=None, step_no=None):
         self.calls.append(role)
+        self.messages.append(messages)
         text = self._script.pop(0)
         return LLMResponse(text=text, tokens_in=20, tokens_out=5, cost_usd=0.0002, model="glm-4.7", finish_reason="stop")
 
@@ -280,12 +283,6 @@ def test_content_agent_drops_unverified_source_url_for_news(db_session, monkeypa
     assert db_session.query(Post).filter_by(text=good_text).one().status == "scheduled"
 
 
-class _CapturingLLMClient(_ScriptedLLMClient):
-    def complete(self, role, messages, run_id=None, step_no=None):
-        self.messages = messages
-        return super().complete(role, messages, run_id=run_id, step_no=step_no)
-
-
 def _content_settings():
     return {
         "post_length": {"min_chars": 5, "max_chars": 400, "hard_max_chars": 500},
@@ -315,10 +312,10 @@ def test_content_agent_first_prompt_contains_recent_posts_and_ends_with_history(
     db_session.add(Post(text=long_recent, category="utp_cta", status="published"))
     db_session.commit()
 
-    client = _CapturingLLMClient([_tool_call_json("save_draft", {"text": "пост", "category": "educational"})])
+    client = _ScriptedLLMClient([_tool_call_json("save_draft", {"text": "пост", "category": "educational"})])
     ContentAgent(llm_client=client).run(trigger="manual")
 
-    user_prompt = client.messages[-1]["content"]
+    user_prompt = client.messages[-1][1]["content"]
     assert "Ищу бизнесы, где склад теряет остатки." in user_prompt
     assert long_recent not in user_prompt  # truncated preview, not the full text
     assert user_prompt.rstrip().endswith("[]")  # history slot is last, keeping the prefix cacheable
@@ -332,3 +329,101 @@ def test_content_agent_web_search_truncates_result_content(monkeypatch):
 
     assert results[0]["url"] == "https://example.com"
     assert len(results[0]["content"]) < 1000
+
+
+def _patch_content_env(monkeypatch, critic_calls: list | None = None):
+    monkeypatch.setattr("src.agents.content.load_settings", _content_settings)
+
+    def _critic(**kwargs):
+        if critic_calls is not None:
+            critic_calls.append(kwargs)
+        return {"pass": True, "issues": [], "tokens_in": 1, "tokens_out": 1, "cost_usd": 0.0}
+
+    monkeypatch.setattr("src.agents.content.run_style_critic", _critic)
+
+
+def test_content_agent_puts_assignment_into_prompt_and_records_it_on_run(db_session, monkeypatch):
+    _seed_active_style(db_session)
+    _patch_content_env(monkeypatch)
+    llm = _ScriptedLLMClient([_tool_call_json("save_draft", {"text": "пост про клиники", "category": "utp_cta"})])
+    assignment = Assignment(sector="клиники и медицина", category="utp_cta")
+
+    run = ContentAgent(llm_client=llm, assignment=assignment).run(trigger="manual")
+
+    user_prompt = llm.messages[0][1]["content"]
+    assert "Сфера бизнеса: клиники и медицина" in user_prompt
+    assert "Категория: utp_cta" in user_prompt
+    assert "{assignment}" not in user_prompt
+    assert json.loads(run.output_ref) == {"sector": "клиники и медицина", "category": "utp_cta", "is_new_sector": False}
+
+
+def test_content_agent_forces_assigned_sector_and_category_over_llm_args(db_session, monkeypatch):
+    _seed_active_style(db_session)
+    _patch_content_env(monkeypatch)
+    script = [_tool_call_json("save_draft", {
+        "text": "пост про склад", "category": "personal", "sector": "производство",
+    })]
+    assignment = Assignment(sector="логистика и доставка", category="utp_cta")
+
+    ContentAgent(llm_client=_ScriptedLLMClient(script), assignment=assignment).run(trigger="manual")
+
+    post = db_session.query(Post).filter_by(text="пост про склад").one()
+    assert post.category == "utp_cta"
+    assert post.sector == "логистика и доставка"
+    assert db_session.query(Sector).count() == 0
+
+
+def test_content_agent_inserts_llm_proposed_sector_for_new_sector_assignment(db_session, monkeypatch):
+    _seed_active_style(db_session)
+    db_session.add(Sector(name="производство", source="seed"))
+    db_session.commit()
+    critic_calls = []
+    _patch_content_env(monkeypatch, critic_calls)
+    llm = _ScriptedLLMClient([
+        _tool_call_json("save_draft", {"text": "без сферы", "category": "educational"}),
+        _tool_call_json("save_draft", {"text": "пост про автосервисы", "category": "educational", "sector": "  Автосервисы "}),
+    ])
+    assignment = Assignment(sector=None, category="educational", is_new_sector=True)
+
+    run = ContentAgent(llm_client=llm, assignment=assignment).run(trigger="manual")
+
+    assert run.status == "ok"
+    assert "производство" in llm.messages[0][1]["content"]
+    assert len(critic_calls) == 1  # missing-sector rejection never reaches style_critic
+    assert db_session.query(Post).filter_by(text="без сферы").count() == 0
+    post = db_session.query(Post).filter_by(text="пост про автосервисы").one()
+    assert post.sector == "автосервисы"
+    assert db_session.query(Sector).filter_by(name="автосервисы").one().source == "llm"
+
+
+def test_content_agent_system_prompt_lists_best_in_sector_before_best_overall(db_session, monkeypatch):
+    _seed_active_style(db_session)
+    db_session.add_all([
+        Post(text="лучший в логистике", category="utp_cta", status="published", sector="логистика и доставка", score=50),
+        Post(text="лучший в производстве", category="utp_cta", status="published", sector="производство", score=125),
+    ])
+    db_session.commit()
+    _patch_content_env(monkeypatch)
+    llm = _ScriptedLLMClient([_tool_call_json("save_draft", {"text": "новый пост про доставку", "category": "utp_cta"})])
+    assignment = Assignment(sector="логистика и доставка", category="utp_cta")
+
+    ContentAgent(llm_client=llm, assignment=assignment).run(trigger="manual")
+
+    system_prompt = llm.messages[0][0]["content"]
+    sector_header = "## Твои лучшие посты в сфере «логистика и доставка»"
+    overall_header = "## Твои лучшие посты в целом"
+    assert system_prompt.index(sector_header) < system_prompt.index("лучший в логистике") < system_prompt.index(overall_header)
+
+
+def test_content_agent_without_assignment_keeps_llm_category_and_no_sector(db_session, monkeypatch):
+    _seed_active_style(db_session)
+    _patch_content_env(monkeypatch)
+    llm = _ScriptedLLMClient([_tool_call_json("save_draft", {"text": "ручной запуск", "category": "personal"})])
+
+    run = ContentAgent(llm_client=llm).run(trigger="manual")
+
+    post = db_session.query(Post).filter_by(text="ручной запуск").one()
+    assert post.category == "personal"
+    assert post.sector is None
+    assert run.output_ref is None
+    assert "ЗАДАНИЕ НА ЭТОТ ПОСТ" not in llm.messages[0][1]["content"]
