@@ -38,3 +38,37 @@ def test_assemble_system_prompt_handles_empty_playbook_and_examples():
     # Must not raise on empty lists, and must not contain leftover
     # formatting artifacts like an empty bullet list.
     assert "automation" in result
+
+
+def test_assemble_system_prompt_separates_sector_best_from_overall_best():
+    result = assemble_system_prompt(
+        constitution="C",
+        knowledge_base={"niche": "automation"},
+        active_genome="G",
+        playbook_rules=[],
+        swipe_examples=[],
+        top_posts=["лучший в производстве"],
+        sector_top_posts=["лучший в логистике"],
+        sector="логистика и доставка",
+    )
+
+    sector_header = "## Твои лучшие посты в сфере «логистика и доставка»"
+    overall_header = "## Твои лучшие посты в целом (переноси приёмы и структуру, а не тему)"
+    assert sector_header in result
+    assert overall_header in result
+    assert result.index(sector_header) < result.index("лучший в логистике") < result.index(overall_header)
+    assert result.index(overall_header) < result.index("лучший в производстве")
+
+
+def test_assemble_system_prompt_without_sector_keeps_plain_best_posts_header():
+    result = assemble_system_prompt(
+        constitution="C",
+        knowledge_base={"niche": "automation"},
+        active_genome="G",
+        playbook_rules=[],
+        swipe_examples=[],
+        top_posts=["мой лучший пост"],
+    )
+
+    assert "## Твои лучшие посты\n" in result
+    assert "в сфере" not in result
