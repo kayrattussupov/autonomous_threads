@@ -278,3 +278,57 @@ def test_content_agent_drops_unverified_source_url_for_news(db_session, monkeypa
     assert calls[0]["source_url"] is None
     assert db_session.query(Post).filter_by(text=news_text).count() == 0  # never persisted with a fake url
     assert db_session.query(Post).filter_by(text=good_text).one().status == "scheduled"
+
+
+class _CapturingLLMClient(_ScriptedLLMClient):
+    def complete(self, role, messages, run_id=None, step_no=None):
+        self.messages = messages
+        return super().complete(role, messages, run_id=run_id, step_no=step_no)
+
+
+def _content_settings():
+    return {
+        "post_length": {"min_chars": 5, "max_chars": 400, "hard_max_chars": 500},
+        "publish_times": ["09:00"],
+        "publish_timezone": "Asia/Almaty",
+        "agent_limits": {"max_steps": 8, "max_tokens": 40000, "max_seconds": 120},
+    }
+
+
+def test_content_agent_does_not_offer_tools_duplicating_prompt_context(db_session):
+    """Recent posts and top performers are already in the prompt; offering
+    tools that re-fetch them costs a full prompt re-send per call."""
+    tools = ContentAgent(llm_client=_ScriptedLLMClient([])).tools()
+
+    assert "get_recent_posts" not in tools
+    assert "get_top_performers" not in tools
+    assert "save_draft" in tools
+
+
+def test_content_agent_first_prompt_contains_recent_posts_and_ends_with_history(db_session, monkeypatch):
+    _seed_active_style(db_session)
+    monkeypatch.setattr("src.agents.content.load_settings", _content_settings)
+    monkeypatch.setattr("src.agents.content.run_style_critic", lambda **kwargs: {
+        "pass": True, "issues": [], "tokens_in": 1, "tokens_out": 1, "cost_usd": 0.0,
+    })
+    long_recent = "Ищу бизнесы, где склад теряет остатки. " + "х" * 1000
+    db_session.add(Post(text=long_recent, category="utp_cta", status="published"))
+    db_session.commit()
+
+    client = _CapturingLLMClient([_tool_call_json("save_draft", {"text": "пост", "category": "educational"})])
+    ContentAgent(llm_client=client).run(trigger="manual")
+
+    user_prompt = client.messages[-1]["content"]
+    assert "Ищу бизнесы, где склад теряет остатки." in user_prompt
+    assert long_recent not in user_prompt  # truncated preview, not the full text
+    assert user_prompt.rstrip().endswith("[]")  # history slot is last, keeping the prefix cacheable
+
+
+def test_content_agent_web_search_truncates_result_content(monkeypatch):
+    monkeypatch.setattr("src.agents.content.web_search", lambda query: [
+        {"title": "t", "url": "https://example.com", "content": "с" * 5000},
+    ])
+    results = ContentAgent(llm_client=_ScriptedLLMClient([])).tools()["web_search"](query="q")
+
+    assert results[0]["url"] == "https://example.com"
+    assert len(results[0]["content"]) < 1000

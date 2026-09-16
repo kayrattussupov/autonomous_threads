@@ -16,5 +16,7 @@ roles:
   analyst:       { provider: kimi, model: kimi-k2.6, max_tokens: 8000 }
   commenter:     { provider: kimi, model: kimi-k2.6, max_tokens: 500 }
   lead_scorer:   { provider: kimi, model: kimi-k2.6, max_tokens: 300 }
-  style_critic:  { provider: kimi, model: kimi-k2.6, max_tokens: 400 }
+  # style_critic: the prompt caps output at 3 short issues; 800 is headroom so
+  # the JSON never gets cut off (finish_reason=length reads as a rejection).
+  style_critic:  { provider: kimi, model: kimi-k2.6, max_tokens: 800 }
   classifier:    { provider: kimi, model: kimi-k2.6, max_tokens: 200 }

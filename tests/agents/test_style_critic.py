@@ -153,3 +153,11 @@ def test_combines_deterministic_and_llm_issues(monkeypatch):
 
     assert result["pass"] is False
     assert len(result["issues"]) == 2
+
+
+def test_critic_prompt_asks_for_short_issue_list():
+    """The critic's max_tokens is small; verbose issue lists got cut off
+    mid-JSON (finish_reason=length) and were counted as a rejection."""
+    from src.agents.style_critic import CRITIC_PROMPT_TEMPLATE
+
+    assert "не больше 3" in CRITIC_PROMPT_TEMPLATE
