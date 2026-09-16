@@ -2,6 +2,7 @@ export type Post = {
   id: number;
   text: string;
   category: string;
+  sector: string | null;
   status: string;
   source_url: string | null;
   style_variant_id: number | null;
@@ -106,4 +107,16 @@ export type FunnelMonth = {
 export type Spend = {
   month_to_date_usd: number;
   cap_usd: number;
+};
+
+export type SectorStat = {
+  name: string;
+  source: string;
+  active: boolean;
+  published_n: number;
+  mean_score: number | null;
+  median_score: number | null;
+  last_post_at: string | null;
+  weight: number | null;
+  probability: number | null;
 };

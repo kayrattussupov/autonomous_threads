@@ -5,6 +5,7 @@ import type {
   PlaybookRule,
   Post,
   PostsPage,
+  SectorStat,
   Spend,
   StyleVariant,
   TelegramAlert,
@@ -49,6 +50,7 @@ export function getPosts(params: {
   style_variant_id?: number;
   model_used?: string;
   status?: string;
+  sector?: string;
   page?: number;
   page_size?: number;
 }): Promise<PostsPage> {
@@ -103,6 +105,10 @@ export function getTelegramAlerts(limit = 50): Promise<TelegramAlert[]> {
   return apiFetch<TelegramAlert[]>(`/telegram-alerts?limit=${limit}`);
 }
 
+export function getSectors(): Promise<SectorStat[]> {
+  return apiFetch<SectorStat[]>("/sectors");
+}
+
 export type {
   AgentRun,
   AgentStep,
@@ -110,6 +116,7 @@ export type {
   PlaybookRule,
   Post,
   PostsPage,
+  SectorStat,
   Spend,
   StyleVariant,
   TelegramAlert,
