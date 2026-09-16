@@ -396,6 +396,77 @@ def test_content_agent_inserts_llm_proposed_sector_for_new_sector_assignment(db_
     assert db_session.query(Sector).filter_by(name="автосервисы").one().source == "llm"
 
 
+def test_content_agent_downgrades_forced_news_without_source_url_to_educational(db_session, monkeypatch):
+    """An assignment forcing category='news' with no verified source_url can
+    never pass style_critic (news requires a source) — save_draft must
+    downgrade it to 'educational' before calling the critic and persisting,
+    rather than looping to needs_review forever (finding F2)."""
+    _seed_active_style(db_session)
+    critic_calls = []
+    _patch_content_env(monkeypatch, critic_calls)
+    llm = _ScriptedLLMClient([_tool_call_json("save_draft", {"text": "пост без источника", "category": "news"})])
+    assignment = Assignment(sector="производство", category="news")
+
+    run = ContentAgent(llm_client=llm, assignment=assignment).run(trigger="manual")
+
+    assert run.status == "ok"
+    assert critic_calls[0]["category"] == "educational"
+    post = db_session.query(Post).filter_by(text="пост без источника").one()
+    assert post.category == "educational"
+    assert post.status == "scheduled"
+
+
+def test_content_agent_downgrades_forced_news_with_unverifiable_source_to_educational(db_session, monkeypatch):
+    _seed_active_style(db_session)
+    critic_calls = []
+    _patch_content_env(monkeypatch, critic_calls)
+    monkeypatch.setattr("src.agents.content.verify_source", lambda url: False)
+    llm = _ScriptedLLMClient([_tool_call_json("save_draft", {
+        "text": "пост с плохим источником", "category": "news", "source_url": "https://fake.example.com/x",
+    })])
+    assignment = Assignment(sector="производство", category="news")
+
+    run = ContentAgent(llm_client=llm, assignment=assignment).run(trigger="manual")
+
+    assert run.status == "ok"
+    assert critic_calls[0]["category"] == "educational"
+    assert critic_calls[0]["source_url"] is None
+    post = db_session.query(Post).filter_by(text="пост с плохим источником").one()
+    assert post.category == "educational"
+    assert post.status == "scheduled"
+
+
+def test_content_agent_rejects_llm_proposed_sector_that_duplicates_existing(db_session, monkeypatch):
+    """A new-sector assignment whose LLM-proposed name normalizes to an
+    already-known sector (active OR inactive) must be rejected without
+    reaching style_critic or persisting — it isn't actually a new sector
+    (finding F3)."""
+    _seed_active_style(db_session)
+    db_session.add_all([
+        Sector(name="производство", source="seed"),
+        Sector(name="архив", source="llm", active=False),
+    ])
+    db_session.commit()
+    critic_calls = []
+    _patch_content_env(monkeypatch, critic_calls)
+    llm = _ScriptedLLMClient([
+        _tool_call_json("save_draft", {"text": "дубликат сферы", "category": "educational", "sector": "  Производство "}),
+        _tool_call_json("save_draft", {"text": "дубликат архива", "category": "educational", "sector": "Архив"}),
+        _tool_call_json("save_draft", {"text": "настоящая новая сфера", "category": "educational", "sector": "Автосервисы"}),
+    ])
+    assignment = Assignment(sector=None, category="educational", is_new_sector=True)
+
+    run = ContentAgent(llm_client=llm, assignment=assignment).run(trigger="manual")
+
+    assert run.status == "ok"
+    assert len(critic_calls) == 1  # neither duplicate reached the critic, only the genuinely new sector did
+    assert critic_calls[0]["text"] == "настоящая новая сфера"
+    assert db_session.query(Post).filter_by(text="дубликат сферы").count() == 0
+    assert db_session.query(Post).filter_by(text="дубликат архива").count() == 0
+    post = db_session.query(Post).filter_by(text="настоящая новая сфера").one()
+    assert post.sector == "автосервисы"
+
+
 def test_content_agent_system_prompt_lists_best_in_sector_before_best_overall(db_session, monkeypatch):
     _seed_active_style(db_session)
     db_session.add_all([

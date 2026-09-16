@@ -11,6 +11,7 @@ from src.db.repo import (
     list_posts,
     list_sectors,
     median_post_score,
+    sector_exists,
     set_agent_run_output_ref,
 )
 
@@ -105,6 +106,18 @@ def test_list_posts_and_median_filter_by_sector(db_session):
     assert total == 2
     assert {p.text for p in items} == {"1", "2"}
     assert median_post_score(db_session, sector="a") == 15.0
+
+
+def test_sector_exists_true_for_active_and_inactive_false_otherwise(db_session):
+    db_session.add_all([
+        Sector(name="производство", source="seed"),
+        Sector(name="архив", source="llm", active=False),
+    ])
+    db_session.commit()
+
+    assert sector_exists(db_session, "производство") is True
+    assert sector_exists(db_session, "архив") is True
+    assert sector_exists(db_session, "неизвестная") is False
 
 
 def test_set_agent_run_output_ref(db_session):

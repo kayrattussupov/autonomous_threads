@@ -26,7 +26,9 @@ export default async function PostsPage({
       page,
       page_size: 25,
     }),
-    getSectors(),
+    // The sector filter is a nice-to-have on top of the posts list — if
+    // /sectors fails, the page should still render the posts (finding F5).
+    getSectors().catch(() => []),
   ]);
 
   return (

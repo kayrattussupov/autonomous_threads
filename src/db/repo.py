@@ -644,6 +644,12 @@ def get_or_create_sector(session: Session, name: str, source: str) -> tuple[Sect
     return sector, True
 
 
+def sector_exists(session: Session, name: str) -> bool:
+    return session.execute(
+        select(Sector.id).where(Sector.name == name)
+    ).scalar_one_or_none() is not None
+
+
 def get_active_sector_names(session: Session) -> list[str]:
     return list(session.execute(
         select(Sector.name).where(Sector.active.is_(True)).order_by(Sector.id)

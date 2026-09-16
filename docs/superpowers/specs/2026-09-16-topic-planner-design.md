@@ -50,7 +50,7 @@ ContentAgent (Kimi `post_writer`) нашёл удачную тему (произ
    - `d` — сколько постов назад в окне/истории была эта сфера (если не было ни разу, `d = window`); `recency_w = 0.5 + min(d, window)/window`;
    - если доля сферы в окне `≥ max_sector_share`, вес = 0;
    - `weight = perf_w · recency_w`; выбор `rng.choices` по весам. Если все веса нулевые, берётся сфера с максимальным `d`.
-3. Вес категории: `target_share / max(actual_share_in_window, 0.05)`; выбор `rng.choices`.
+3. Вес категории: `target_share² / max(actual_share_in_window, 0.05)` (квадрат в числителе не случаен: `target_share / actual_share` равновесится при `actual_share ∝ sqrt(target_share)`, а не при `actual_share = target_share`); выбор `rng.choices`.
 
 ## Интеграция в ContentAgent (`src/agents/content.py`)
 

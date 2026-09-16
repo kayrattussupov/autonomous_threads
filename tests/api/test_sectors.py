@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 
 from src.api.main import app
+from src.config import load_settings
 from src.db.models import Post, Sector
 
 client = TestClient(app)
@@ -33,4 +34,6 @@ def test_get_sectors_returns_stats_and_planner_probabilities(db_session):
     assert rows["horeca"]["weight"] > 0
     assert rows["архив"]["active"] is False
     assert rows["архив"]["probability"] is None
-    assert abs(sum(r["probability"] or 0 for r in rows.values()) - 1.0) < 1e-6
+    new_sector_prob = load_settings()["topic_planner"]["new_sector_prob"]
+    expected_total = 1.0 - new_sector_prob
+    assert abs(sum(r["probability"] or 0 for r in rows.values()) - expected_total) < 1e-6

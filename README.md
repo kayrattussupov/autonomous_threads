@@ -125,18 +125,6 @@ Autonomous Threads-posting agent. See `SPEC.md` for the full design.
    > Replace `'...'` with your actual 300-800 word authored voice before
    > production posting begins.
 
-### Topic planner (sectors)
-
-ContentAgent no longer picks its own topic: `src/content/topic_planner.py` assigns a
-business sector + category before each run (tune in `config/settings.yaml` →
-`topic_planner`). After deploying migration `0003`:
-
-1. `python -m scripts.backfill_post_sectors` — tag existing posts with a sector (once).
-2. `python -m scripts.simulate_topic_planner 30` — dry-run: shows how the next 30
-   posts would be distributed across sectors/categories, creates nothing.
-
-The dashboard «Сферы» page shows each sector's stats and its current selection probability.
-
 6. **Running tests**
 
    Tests need a running Postgres and a `threads_agent_test` database, and read the
@@ -150,6 +138,35 @@ The dashboard «Сферы» page shows each sector's stats and its current sele
    Adjust the host/port to match wherever your Postgres container is actually
    reachable (see the port-remap note in step 2 if you're using a
    `docker-compose.override.yml`).
+
+## Topic planner (sectors)
+
+ContentAgent no longer picks its own topic: `src/content/topic_planner.py` assigns a
+business sector + category before each run (tune in `config/settings.yaml` →
+`topic_planner`). After deploying migration `0003`:
+
+1. `python -m scripts.backfill_post_sectors` — tag existing posts with a sector (once).
+2. `python -m scripts.simulate_topic_planner 30` — dry-run: shows how the next 30
+   posts would be distributed across sectors/categories, creates nothing.
+
+Locally (outside Docker) run these with the host-side Python against your dev
+database. In production the scripts run inside the `worker` container, e.g.:
+
+```
+docker compose -f docker-compose.prod.yml exec worker python -m scripts.backfill_post_sectors
+```
+
+The dashboard «Сферы» page shows each sector's stats and its current selection probability.
+
+There is no API/UI toggle to deactivate a sector (YAGNI for now) — do it directly in
+Postgres:
+
+```sql
+UPDATE sectors SET active = false WHERE name = '...';
+```
+
+A deactivated sector is excluded from the planner's sector choice but its past posts
+and stats are kept.
 
 ## Dashboard API
 

@@ -20,6 +20,7 @@ from src.db.repo import (
     get_top_performers,
     increment_style_variant_posts_n,
     insert_post,
+    sector_exists,
     set_agent_run_output_ref,
 )
 from src.llm.client import LLMClient
@@ -212,6 +213,13 @@ class ContentAgent(ReActAgent):
                 sector = normalize_sector(sector) if sector else ""
                 if not sector:
                     return {"status": "rejected", "issues": ["ЗАДАНИЕ требует новую сферу: передай её в save_draft(sector=...)"]}
+                with session_scope() as session:
+                    already_exists = sector_exists(session, sector)
+                if already_exists:
+                    return {
+                        "status": "rejected",
+                        "issues": [f"сфера «{sector}» уже есть в списке — выбери сферу, которой нет в списке"],
+                    }
             else:
                 sector = self._assignment.sector
         else:
@@ -220,6 +228,12 @@ class ContentAgent(ReActAgent):
         genome = self._active_style.genome if self._active_style else ""
         if category == "news" and source_url and not verify_source(source_url):
             source_url = None
+        if self._assignment is not None and category == "news" and not source_url:
+            # A planner-forced news assignment with no verified source can
+            # never pass style_critic (news requires a source_url) — that
+            # would loop to needs_review every time. Downgrade instead; the
+            # post itself is otherwise fine (finding F2).
+            category = "educational"
         with session_scope() as session:
             recent_texts = [p.text for p in get_recent_posts(session, n=30)]
 

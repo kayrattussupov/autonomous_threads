@@ -84,7 +84,9 @@ def compute_category_weights(category_mix: dict[str, float], window: list[tuple[
     weights = {}
     for category, target_share in category_mix.items():
         actual_share = sum(1 for _, window_category in window if window_category == category) / total if total else 0.0
-        weights[category] = target_share / max(actual_share, MIN_CATEGORY_SHARE)
+        # target/actual settles at actual ∝ sqrt(target), not actual ∝ target
+        # (finding F1); squaring the numerator makes the equilibrium p = target.
+        weights[category] = target_share * target_share / max(actual_share, MIN_CATEGORY_SHARE)
     return weights
 
 
@@ -146,6 +148,10 @@ def describe_sectors(session: Session, settings: dict | None = None) -> list[dic
     inputs = load_planner_inputs(session, cfg)
     weights = compute_sector_weights(inputs, cfg)
     total_weight = sum(weights.values())
+    # choose_assignment reserves new_sector_prob of picks for a brand-new
+    # sector before ever weighting the known ones — the stats page's
+    # probabilities must reflect that same reserved share (finding F4).
+    known_sector_share = 1 - cfg["new_sector_prob"]
     last_post_at = get_last_post_at_by_sector(session)
 
     rows = []
@@ -161,6 +167,10 @@ def describe_sectors(session: Session, settings: dict | None = None) -> list[dic
             "median_score": statistics.median(scores) if scores else None,
             "last_post_at": last_post_at.get(sector.name),
             "weight": weight,
-            "probability": (weight / total_weight) if weight is not None and total_weight > 0 else None,
+            "probability": (
+                (weight / total_weight) * known_sector_share
+                if weight is not None and total_weight > 0
+                else None
+            ),
         })
     return rows

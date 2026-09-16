@@ -88,13 +88,32 @@ def test_sector_never_written_gets_max_recency_and_recent_one_gets_min():
 def test_category_under_target_gets_more_weight():
     window = [(None, "utp_cta")] * 12
     weights = compute_category_weights(CFG["category_mix"], window)
-    assert weights["utp_cta"] == pytest.approx(0.5)
-    assert weights["educational"] == pytest.approx(0.3 / 0.05)
+    assert weights["utp_cta"] == pytest.approx(0.5 * 0.5 / 1.0)
+    assert weights["educational"] == pytest.approx(0.3 * 0.3 / 0.05)
 
 
 def test_category_weights_on_empty_window_follow_target_mix():
     weights = compute_category_weights(CFG["category_mix"], [])
-    assert weights["utp_cta"] / weights["educational"] == pytest.approx(0.5 / 0.3)
+    assert weights["utp_cta"] / weights["educational"] == pytest.approx((0.5**2) / (0.3**2))
+
+
+def test_category_mix_simulation_converges_to_target_shares_not_sqrt():
+    """p ∝ target/actual equilibrates at actual ∝ sqrt(target) (finding F1).
+    p ∝ target²/actual equilibrates at actual ∝ target, which is what the
+    configured category_mix is supposed to mean."""
+    sectors = ["производство"] + [f"сфера {i}" for i in range(9)]
+    inputs = _inputs(sectors)
+    cfg = {**CFG, "new_sector_prob": 0.0}
+    rng = random.Random(7)
+    picks = []
+    for _ in range(3000):
+        assignment = choose_assignment(inputs, cfg, rng)
+        picks.append(assignment.category)
+        inputs.window = [(assignment.sector, assignment.category)] + inputs.window[: cfg["window_posts"] - 1]
+
+    for category, target in cfg["category_mix"].items():
+        share = picks.count(category) / len(picks)
+        assert abs(share - target) <= 0.04, f"{category}: share={share} target={target}"
 
 
 def test_choose_assignment_returns_new_sector_slot_when_probability_hits():
@@ -175,4 +194,8 @@ def test_describe_sectors_reports_stats_and_probabilities(db_session):
     assert rows["horeca"]["weight"] > 0
     assert rows["архив"]["weight"] is None
     assert rows["архив"]["probability"] is None
-    assert sum(r["probability"] or 0 for r in rows.values()) == pytest.approx(1.0)
+    assert sum(r["probability"] or 0 for r in rows.values()) == pytest.approx(1.0)  # CFG's new_sector_prob is 0.0
+
+    cfg_with_new_sector_prob = {**CFG, "new_sector_prob": 0.1}
+    rows_with_reserve = describe_sectors(db_session, settings=cfg_with_new_sector_prob)
+    assert sum(r["probability"] or 0 for r in rows_with_reserve) == pytest.approx(0.9)
