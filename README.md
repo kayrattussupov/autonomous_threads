@@ -125,6 +125,18 @@ Autonomous Threads-posting agent. See `SPEC.md` for the full design.
    > Replace `'...'` with your actual 300-800 word authored voice before
    > production posting begins.
 
+### Topic planner (sectors)
+
+ContentAgent no longer picks its own topic: `src/content/topic_planner.py` assigns a
+business sector + category before each run (tune in `config/settings.yaml` →
+`topic_planner`). After deploying migration `0003`:
+
+1. `python -m scripts.backfill_post_sectors` — tag existing posts with a sector (once).
+2. `python -m scripts.simulate_topic_planner 30` — dry-run: shows how the next 30
+   posts would be distributed across sectors/categories, creates nothing.
+
+The dashboard «Сферы» page shows each sector's stats and its current selection probability.
+
 6. **Running tests**
 
    Tests need a running Postgres and a `threads_agent_test` database, and read the
