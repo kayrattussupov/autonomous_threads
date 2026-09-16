@@ -10,10 +10,21 @@ def _render_playbook(rules: list[str]) -> str:
     return f"# Playbook\n{lines}"
 
 
-def _render_examples(swipe_examples: list[str], top_posts: list[str]) -> str:
+def _render_examples(
+    swipe_examples: list[str],
+    top_posts: list[str],
+    sector_top_posts: list[str],
+    sector: str | None,
+) -> str:
     parts = ["# Примеры"]
+    if sector_top_posts:
+        parts.append(f"## Твои лучшие посты в сфере «{sector}»")
+        parts.extend(f"- {p}" for p in sector_top_posts)
     if top_posts:
-        parts.append("## Твои лучшие посты")
+        if sector:
+            parts.append("## Твои лучшие посты в целом (переноси приёмы и структуру, а не тему)")
+        else:
+            parts.append("## Твои лучшие посты")
         parts.extend(f"- {p}" for p in top_posts)
     if swipe_examples:
         parts.append("## Зашедшие посты в нише (чужие)")
@@ -30,11 +41,13 @@ def assemble_system_prompt(
     playbook_rules: list[str],
     swipe_examples: list[str],
     top_posts: list[str],
+    sector_top_posts: list[str] | None = None,
+    sector: str | None = None,
 ) -> str:
     return "\n\n".join([
         constitution,
         _render_knowledge_base(knowledge_base),
         active_genome,
         _render_playbook(playbook_rules),
-        _render_examples(swipe_examples, top_posts),
+        _render_examples(swipe_examples, top_posts, sector_top_posts or [], sector),
     ])

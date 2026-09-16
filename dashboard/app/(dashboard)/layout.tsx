@@ -21,6 +21,7 @@ export default async function DashboardLayout({ children }: { children: ReactNod
         <nav style={{ display: "flex", gap: 16 }}>
           <Link href="/">Воронка</Link>
           <Link href="/posts">Посты</Link>
+          <Link href="/sectors">Сферы</Link>
           <Link href="/agents">Агенты</Link>
           <Link href="/styles">Стили</Link>
           <Link href="/playbook">Playbook</Link>

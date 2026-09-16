@@ -8,6 +8,7 @@ from src.agents.feed_miner import run_feed_miner
 from src.agents.publisher import publish_scheduled_posts
 from src.agents.reply_triage import run_reply_triage
 from src.config import load_settings
+from src.content.topic_planner import plan_next_post
 from src.db.engine import session_scope
 from src.db.repo import count_scheduled_posts
 
@@ -22,7 +23,9 @@ def run_content_agent_if_queue_low():
     if scheduled_count >= queue_depth:
         return
 
-    ContentAgent().run(trigger="queue_low")
+    with session_scope() as session:
+        assignment = plan_next_post(session)
+    ContentAgent(assignment=assignment).run(trigger="queue_low")
 
 
 def run_analyst_agent_monthly():

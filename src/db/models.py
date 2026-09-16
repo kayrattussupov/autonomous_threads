@@ -19,6 +19,7 @@ class Post(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     text: Mapped[str] = mapped_column(Text, nullable=False)
     category: Mapped[str] = mapped_column(Text, nullable=False)
+    sector: Mapped[str | None] = mapped_column(Text, index=True)
     status: Mapped[str] = mapped_column(Text, nullable=False)
     source_url: Mapped[str | None] = mapped_column(Text)
     style_variant_id: Mapped[int | None] = mapped_column(ForeignKey("style_variants.id"))
@@ -87,6 +88,16 @@ class KnowledgeBaseEntry(Base):
     key: Mapped[str] = mapped_column(Text, primary_key=True)
     value: Mapped[str] = mapped_column(Text, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class Sector(Base):
+    __tablename__ = "sectors"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    source: Mapped[str] = mapped_column(Text, nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true", default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class Reply(Base):

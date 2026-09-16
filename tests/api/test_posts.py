@@ -36,3 +36,16 @@ def test_get_posts_median_score_reflects_filtered_set(db_session):
     assert response.status_code == 200
     body = response.json()
     assert body["median_score"] == 15.0
+
+
+def test_get_posts_filters_by_sector_and_returns_sector_field(db_session):
+    db_session.add(Post(text="prod", category="utp_cta", status="published", sector="производство", score=10))
+    db_session.add(Post(text="log", category="utp_cta", status="published", sector="логистика", score=20))
+    db_session.commit()
+
+    response = client.get("/posts", params={"sector": "логистика"}, headers=AUTH)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 1
+    assert body["items"][0]["sector"] == "логистика"
+    assert body["median_score"] == 20.0

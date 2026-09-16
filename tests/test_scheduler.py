@@ -1,5 +1,6 @@
 from unittest.mock import MagicMock
 
+from src.content.topic_planner import Assignment
 from src.db.repo import insert_post
 from src.scheduler import build_scheduler, run_content_agent_if_queue_low, run_analyst_agent_monthly
 
@@ -39,9 +40,14 @@ def test_run_content_agent_if_queue_low_runs_agent_when_scheduled_count_below_qu
     agent_class = MagicMock(return_value=agent_instance)
     monkeypatch.setattr("src.scheduler.ContentAgent", agent_class)
 
+    assignment = Assignment(sector="производство", category="utp_cta")
+    planner = MagicMock(return_value=assignment)
+    monkeypatch.setattr("src.scheduler.plan_next_post", planner)
+
     run_content_agent_if_queue_low()
 
-    agent_class.assert_called_once_with()
+    planner.assert_called_once()
+    agent_class.assert_called_once_with(assignment=assignment)
     agent_instance.run.assert_called_once_with(trigger="queue_low")
 
 
@@ -55,10 +61,14 @@ def test_run_content_agent_if_queue_low_skips_agent_when_scheduled_count_at_or_a
     agent_class = MagicMock(return_value=agent_instance)
     monkeypatch.setattr("src.scheduler.ContentAgent", agent_class)
 
+    planner = MagicMock()
+    monkeypatch.setattr("src.scheduler.plan_next_post", planner)
+
     run_content_agent_if_queue_low()
 
     agent_class.assert_not_called()
     agent_instance.run.assert_not_called()
+    planner.assert_not_called()
 
 
 def test_build_scheduler_registers_reply_triage_job():

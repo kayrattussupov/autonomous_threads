@@ -1,4 +1,4 @@
-import { getPosts } from "@/lib/api-client";
+import { getPosts, getSectors } from "@/lib/api-client";
 
 export const dynamic = "force-dynamic";
 
@@ -9,6 +9,7 @@ export default async function PostsPage({
     category?: string;
     status?: string;
     model_used?: string;
+    sector?: string;
     page?: string;
   }>;
 }) {
@@ -16,13 +17,19 @@ export default async function PostsPage({
   const pageParam = Number(params.page ?? "1");
   const page = Number.isInteger(pageParam) && pageParam >= 1 ? pageParam : 1;
 
-  const data = await getPosts({
-    category: params.category,
-    status: params.status,
-    model_used: params.model_used,
-    page,
-    page_size: 25,
-  });
+  const [data, sectors] = await Promise.all([
+    getPosts({
+      category: params.category,
+      status: params.status,
+      model_used: params.model_used,
+      sector: params.sector,
+      page,
+      page_size: 25,
+    }),
+    // The sector filter is a nice-to-have on top of the posts list — if
+    // /sectors fails, the page should still render the posts (finding F5).
+    getSectors().catch(() => []),
+  ]);
 
   return (
     <main>
@@ -38,6 +45,14 @@ export default async function PostsPage({
         </select>
         <input type="text" name="category" placeholder="Категория" defaultValue={params.category ?? ""} />
         <input type="text" name="model_used" placeholder="Модель" defaultValue={params.model_used ?? ""} />
+        <select name="sector" defaultValue={params.sector ?? ""}>
+          <option value="">Все сферы</option>
+          {sectors.map((s) => (
+            <option key={s.name} value={s.name}>
+              {s.name}
+            </option>
+          ))}
+        </select>
         <button type="submit">Фильтр</button>
       </form>
       <p>
@@ -47,6 +62,7 @@ export default async function PostsPage({
         <thead>
           <tr>
             <th>Текст</th>
+            <th>Сфера</th>
             <th>Категория</th>
             <th>Статус</th>
             <th>Модель</th>
@@ -60,6 +76,7 @@ export default async function PostsPage({
           {data.items.map((post) => (
             <tr key={post.id}>
               <td>{post.text.slice(0, 80)}</td>
+              <td>{post.sector ?? "—"}</td>
               <td>{post.category}</td>
               <td>{post.status}</td>
               <td>{post.model_used ?? "—"}</td>
